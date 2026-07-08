@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 18% 10%;
+    --foreground: 210 40% 98%;
+    --card: 222 18% 12%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 18% 11%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 263 70% 60%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 222 18% 16%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 222 18% 16%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 263 70% 60%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 222 18% 18%;
+    --input: 222 18% 16%;
+    --ring: 263 70% 60%;
+    --radius: 0.6rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(222 18% 14%) 25%,
+    hsl(222 18% 20%) 50%,
+    hsl(222 18% 14%) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: hsl(222 18% 12%);
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: hsl(222 18% 24%);
+  border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: hsl(263 70% 60%);
+}
