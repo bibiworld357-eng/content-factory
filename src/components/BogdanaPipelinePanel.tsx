@@ -326,12 +326,12 @@ export function BogdanaPipelinePanel() {
       <div className="flex items-center gap-2">
         <Sparkles className="h-5 w-5 text-primary" />
         <h1 className="text-lg font-semibold">Пайплайн Богданы</h1>
-        <span className="text-xs text-muted-foreground">Gemini 1.5 Pro · NanoBanana · Kling · Grok</span>
+        <span className="text-xs text-muted-foreground">Gemini 2.5 Flash · NanoBanana · Kling · Grok</span>
       </div>
 
       {/* ── STAGE 3.1 — Scenario ─────────────────────────────────────── */}
       <Card>
-        <StageHeader icon={Lightbulb} step="1" title="Сценарий (Gemini 1.5 Pro)" />
+        <StageHeader icon={Lightbulb} step="1" title="Сценарий (Gemini 2.5 Flash)" />
         <CardContent className="space-y-4">
           {/* Step A — product */}
           <div>

@@ -5,7 +5,9 @@ import { BOGDANA_SCENARIO_SYSTEM_PROMPT, getBogdanaProduct, type BogdanaProductI
 export type LogFn = (message: string, level?: 'info' | 'success' | 'error') => void
 
 // Google Gen AI SDK — parallel text-generation service (used alongside Grok).
-export const GEMINI_MODEL = 'gemini-1.5-pro'
+// Note: gemini-1.5-pro is retired on the current API. gemini-2.5-flash is used
+// because the Pro tier (gemini-2.5-pro) is not available on AI Studio free keys.
+export const GEMINI_MODEL = 'gemini-2.5-flash'
 
 // Force the model to always return raw JSON.
 const JSON_GENERATION_CONFIG: GenerationConfig = {

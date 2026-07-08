@@ -5,7 +5,10 @@ import { cn } from '@/lib/utils'
 export function TabNavigation() {
   const { activeTab, setActiveTab, videoQueue } = useContentStore()
 
-  const tabs = [
+  // Temporarily limit the visible modes to the Bogdana pipeline + its helpers.
+  const VISIBLE_TABS = ['bogdana', 'montage', 'subs', 'upscale'] as const
+
+  const allTabs = [
     {
       id: 'bogdana' as const,
       label: 'Богдана',
@@ -80,6 +83,8 @@ export function TabNavigation() {
       description: 'Crystal Upscaler',
     },
   ]
+
+  const tabs = allTabs.filter((tab) => (VISIBLE_TABS as readonly string[]).includes(tab.id))
 
   return (
     <div className="flex flex-col gap-1 p-3 border-r border-border bg-card/30 min-w-[200px]">
