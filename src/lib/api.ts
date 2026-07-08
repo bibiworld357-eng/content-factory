@@ -1,7 +1,30 @@
 import type { LogLevel, MinimaxTTSResult } from '@/types'
+import {
+  KLING_AUDIO_MAX_CHARS,
+  clampKlingAudioPrompts,
+  getBogdanaProduct,
+  withStaticCamera,
+  type BogdanaProductId,
+} from './bogdana'
 export type { MinimaxTTSResult }
 
 export type LogFn = (message: string, level?: LogLevel) => void
+
+/**
+ * Build an `Authorization: Bearer <key>` header value.
+ *
+ * The key is trimmed to strip stray whitespace/newlines that leak in from copy-
+ * paste or `.env` files — a common cause of spurious 401 Unauthorized responses
+ * (e.g. from Wavespeed). Throws a clear error when the key is missing so the UI
+ * can prompt for it instead of firing an unauthenticated request.
+ */
+export function bearer(key: string, service = 'API'): string {
+  const trimmed = (key ?? '').trim()
+  if (!trimmed) {
+    throw new Error(`${service}: не задан ключ авторизации (401). Укажите ключ в настройках.`)
+  }
+  return `Bearer ${trimmed}`
+}
 
 export const DNA = `A young woman with subtle, natural heterochromia — her left eye is a soft, realistic blue and her right eye is a natural warm brown, both matching the brightness and lighting of the environment without appearing overly vivid. She has long black hair with a full straight fringe and soft natural waves reaching to the chest.`
 
@@ -52,7 +75,7 @@ export async function getWavespeedBalance(
 
     const response = await fetch(apiUrl, {
       headers: {
-        Authorization: `Bearer ${wavespeedKey}`,
+        Authorization: bearer(wavespeedKey, 'Wavespeed'),
       },
     })
 
@@ -170,7 +193,7 @@ export async function generatePromptsWithGrok(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${grokKey}`,
+          Authorization: bearer(grokKey, 'Grok'),
         },
         body: JSON.stringify(payload),
       }).catch((err) => {
@@ -327,7 +350,7 @@ export async function editImageWithWavespeed(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${wavespeedKey}`,
+          Authorization: bearer(wavespeedKey, 'Wavespeed'),
         },
         body: JSON.stringify(payload),
       })
@@ -415,7 +438,7 @@ export async function editImageWithWavespeed(
     try {
       const pollResponse = await fetch(pollUrl, {
         headers: {
-          Authorization: `Bearer ${wavespeedKey}`,
+          Authorization: bearer(wavespeedKey, 'Wavespeed'),
         },
       })
 
@@ -452,7 +475,7 @@ export async function editImageWithWavespeed(
               console.log(`[Wavespeed] trying: ${tryUrl}`)
               const resultResponse = await fetch(tryUrl, {
                 headers: {
-                  Authorization: `Bearer ${wavespeedKey}`,
+                  Authorization: bearer(wavespeedKey, 'Wavespeed'),
                 },
               })
               
@@ -610,7 +633,7 @@ export async function generateVideoPromptsWithGrok(
           const httpResponse = await fetch('https://api.x.ai/v1/responses', {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${grokKey}`,
+              Authorization: bearer(grokKey, 'Grok'),
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload),
@@ -710,9 +733,12 @@ export async function submitKlingVideoTask(
   onLog?.(`Отправка задачи в Kling [${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
   onLog?.(`✨ IceShelf Element (${ICESHELF_ELEMENT_ID}) применен для консистентности персонажа`, 'success')
 
+  // Always inject the "Static camera" tag to prevent background flicker.
+  const motionPrompt = withStaticCamera(prompt)
+
   const payload: Record<string, unknown> = {
     image: imageUrl,
-    prompt: `${DNA}\n\n${prompt}`,
+    prompt: `${DNA}\n\n${motionPrompt}`,
     duration,
     aspect_ratio: aspectRatio,
     cfg_scale: cfgScale,
@@ -742,7 +768,7 @@ export async function submitKlingVideoTask(
   const httpResponse = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -810,7 +836,7 @@ export async function pollKlingResult(
 
     const httpResponse = await fetch(apiUrl, {
       headers: {
-        Authorization: `Bearer ${wavespeedKey}`,
+        Authorization: bearer(wavespeedKey, 'Wavespeed'),
       },
     })
 
@@ -915,7 +941,7 @@ export async function pollKlingResult(
             console.log('[Kling Poll] videoUrl is API endpoint, fetching actual video URL from:', videoUrl)
             const videoResponse = await fetch(videoUrl, {
               headers: {
-                'Authorization': `Bearer ${wavespeedKey}`,
+                'Authorization': bearer(wavespeedKey, 'Wavespeed'),
               },
             })
             const videoData = await videoResponse.json() as any
@@ -1039,7 +1065,7 @@ async function callGrokResponses(grokKey: string, messages: object[], tools?: ob
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -1422,7 +1448,7 @@ Return ONLY valid JSON (no markdown):
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -1465,7 +1491,7 @@ Return ONLY valid JSON (no markdown):
   try {
     const trResponse = await fetch('https://api.x.ai/v1/responses', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${grokKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: bearer(grokKey, 'Grok'), 'Content-Type': 'application/json' },
       body: JSON.stringify(translateBody),
     })
     if (trResponse.ok) {
@@ -1778,7 +1804,7 @@ Return ONLY valid JSON (no markdown fences):
 
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${grokKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: bearer(grokKey, 'Grok'), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
 
@@ -1827,7 +1853,7 @@ export interface MinimaxVoice {
 export async function fetchMinimaxVoices(minimaxKey: string): Promise<MinimaxVoice[]> {
   const resp = await fetch('/api/minimax/get_voice', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${minimaxKey}` },
+    headers: { 'Content-Type': 'application/json', 'Authorization': bearer(minimaxKey, 'Minimax') },
     body: JSON.stringify({ voice_type: 'voice_cloning' }),
   })
   if (!resp.ok) throw new Error(`Minimax get_voice error ${resp.status}`)
@@ -1855,7 +1881,7 @@ export async function generateVoiceMinimax(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${minimaxKey}`,
+      'Authorization': bearer(minimaxKey, 'Minimax'),
     },
     body: JSON.stringify({
       model,
@@ -2079,7 +2105,7 @@ Return JSON:
 
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
 
@@ -2307,7 +2333,7 @@ export async function upscaleWithCrystal(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2344,7 +2370,7 @@ export async function upscaleWithCrystal(
     await new Promise(resolve => setTimeout(resolve, delayMs))
     
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
     
     if (!pollResp.ok) {
@@ -2508,7 +2534,7 @@ export async function submitInfiniteTalk(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(body),
   })
@@ -2539,7 +2565,7 @@ export async function submitInfiniteTalk(
     await new Promise((r) => setTimeout(r, pollInterval))
 
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
     if (!pollResp.ok) continue
 
@@ -2647,7 +2673,7 @@ Return JSON:
 
   const httpResp = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
   if (!httpResp.ok) {
@@ -2729,7 +2755,7 @@ export async function editImageWithZImageTurboLora(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2758,7 +2784,7 @@ export async function editImageWithZImageTurboLora(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -2806,7 +2832,7 @@ export async function editImageWithGPTImage2(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2835,7 +2861,7 @@ export async function editImageWithGPTImage2(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -2927,7 +2953,7 @@ Target length: 200-250 words of pure technical specifications.`
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -3402,7 +3428,7 @@ Be explicit, detailed, and professional in describing the NSFW scene.`
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -3471,7 +3497,7 @@ export async function editImageWithSeedream(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -3500,7 +3526,7 @@ export async function editImageWithSeedream(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -3549,7 +3575,7 @@ export async function editImageWithGrokImagineWavespeed(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -3578,7 +3604,7 @@ export async function editImageWithGrokImagineWavespeed(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -3619,7 +3645,7 @@ export async function editImageWithGrokImage(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
     },
     body: JSON.stringify(payload),
   })
@@ -4077,7 +4103,7 @@ WARNING: Fabricated URLs, duplicate links, and old content (>48h) will be detect
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -4207,7 +4233,7 @@ Return ONLY valid JSON (no markdown, no extra text):
   const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -4325,7 +4351,7 @@ Return JSON format:
 
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
 
@@ -4410,7 +4436,7 @@ export async function submitKlingVideoToAudio(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${wavespeedKey}`,
+      'Authorization': bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -4458,7 +4484,7 @@ export async function pollKlingVideoToAudioResult(
       : `https://api.wavespeed.ai/api/v3/status/${requestId}`
 
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
 
     if (!pollResp.ok) {
@@ -4487,4 +4513,128 @@ export async function pollKlingVideoToAudioResult(
   }
 
   throw new Error('Kling V2A: превышено время ожидания (3 минуты)')
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bogdana pipeline — Grok helpers (Stage 3.3 audio & Stage 3.4 Threads)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Extract the message text from an xAI /v1/responses payload. */
+function extractGrokText(data: unknown): string {
+  const output = (data as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }).output ?? []
+  const messageOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
+  return (
+    messageOutput?.content?.find((c) => c.type === 'output_text')?.text ??
+    messageOutput?.content?.[0]?.text ??
+    ''
+  ).trim()
+}
+
+async function callGrokJson(grokKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const payload = {
+    model: 'grok-4.20-reasoning',
+    input: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: [{ type: 'input_text', text: userPrompt }] },
+    ],
+    temperature: 0.8,
+    store: false,
+  }
+
+  const httpResponse = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
+    body: JSON.stringify(payload),
+  })
+
+  if (!httpResponse.ok) {
+    const err = await httpResponse.json().catch(() => ({}))
+    throw new Error(`Grok ${httpResponse.status}: ${JSON.stringify(err)}`)
+  }
+
+  return extractGrokText(await httpResponse.json())
+}
+
+function parseJsonArray<T>(raw: string): T[] {
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+  const match = cleaned.match(/\[[\s\S]*\]/)
+  if (!match) throw new Error(`Grok вернул невалидный JSON: ${raw.slice(0, 200)}`)
+  return JSON.parse(match[0]) as T[]
+}
+
+/**
+ * Stage 3.3 (audio): generate a list of SEQUENTIAL sound prompts for a scene.
+ * Each returned prompt is hard-clamped to 200 characters (Kling Audio limit).
+ */
+export async function generateKlingAudioSequence(
+  grokKey: string,
+  sceneDescription: string,
+  userWishes: string,
+  onLog?: LogFn,
+  count = 4
+): Promise<string[]> {
+  onLog?.('🔊 Grok: генерирую последовательность звуков для Kling Audio...', 'info')
+
+  const systemPrompt = `You are a sound designer for 3D claymation stop-motion clips.
+Return ONLY a JSON array of short, SEQUENTIAL sound-effect prompts (English).
+Each prompt describes ONE sound event in playback order and MUST be at most ${KLING_AUDIO_MAX_CHARS} characters. No markdown, no extra text.`
+
+  const userPrompt = `Scene: ${sceneDescription}
+${userWishes.trim() ? `Extra wishes: ${userWishes.trim()}\n` : ''}Return exactly ${count} sequential sound prompts as a JSON array of strings, e.g. ["...", "...", "...", "..."]. Each string <= ${KLING_AUDIO_MAX_CHARS} chars.`
+
+  const raw = await callGrokJson(grokKey, systemPrompt, userPrompt)
+  const list = parseJsonArray<string>(raw)
+  const clamped = clampKlingAudioPrompts(list.map((s) => String(s)))
+
+  if (clamped.length === 0) throw new Error('Grok не вернул звуковые промпты')
+  onLog?.(`✅ Готово ${clamped.length} звук(ов), каждый ≤ ${KLING_AUDIO_MAX_CHARS} симв.`, 'success')
+  return clamped
+}
+
+export interface BogdanaThreadsPost {
+  /** Detected trend / audience pain the post reacts to. */
+  trend: string
+  /** Post body (triggering, ironic), with the article natively woven in. */
+  text: string
+  /** qeep article referenced in the post. */
+  article: string
+}
+
+/**
+ * Stage 3.4: use Grok (X/Twitter access) to parse trends & audience pains
+ * (burnout, remote work, women's health) and write triggering, ironic Threads
+ * posts that natively embed the vitamin article.
+ */
+export async function generateBogdanaThreadsPosts(
+  grokKey: string,
+  productId: BogdanaProductId,
+  onLog?: LogFn,
+  count = 3
+): Promise<BogdanaThreadsPost[]> {
+  const product = getBogdanaProduct(productId)
+  onLog?.(`🧵 Grok: парсю тренды и пишу ${count} постов для Threads про «${product.name}»...`, 'info')
+
+  const systemPrompt = `You write viral, ironic Threads posts in Russian for a plasticine "clean girl" persona (Bogdana).
+Use X/Twitter trends and audience pains (burnout, remote work, women's health) as the hook.
+Goal: provoke arguments, laughter, or "this is so me" comments. Natively weave in the product article.
+Return ONLY raw JSON, no markdown.`
+
+  const userPrompt = `Продукт: ${product.name} — снимает ${product.pain}. Артикул: ${product.article}.
+Найди актуальные тренды и боли аудитории (выгорание, удалёнка, женское здоровье) и напиши ${count} максимально триггерных, ироничных поста для Threads.
+В каждый пост нативно вшей артикул ${product.article}.
+Верни строгий JSON-массив вида:
+[{ "trend": "<тренд/боль, на которую опирается пост>", "text": "<текст поста с нативно вшитым артикулом>", "article": "${product.article}" }]`
+
+  const raw = await callGrokJson(grokKey, systemPrompt, userPrompt)
+  const posts = parseJsonArray<BogdanaThreadsPost>(raw)
+    .map((p) => ({
+      trend: String(p.trend ?? ''),
+      text: String(p.text ?? ''),
+      article: String(p.article ?? product.article),
+    }))
+    .filter((p) => p.text.length > 0)
+
+  if (posts.length === 0) throw new Error('Grok не вернул посты для Threads')
+  onLog?.(`✅ Готово ${posts.length} постов для Threads`, 'success')
+  return posts
 }

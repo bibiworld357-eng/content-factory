@@ -1,4 +1,4 @@
-import { Layers, Video, Newspaper, Clapperboard, Mic, MonitorPlay, Subtitles, PenLine, ImagePlay, Sparkles, ZoomIn } from 'lucide-react'
+import { Layers, Video, Newspaper, Clapperboard, Mic, MonitorPlay, Subtitles, PenLine, ImagePlay, Sparkles, ZoomIn, Wand2 } from 'lucide-react'
 import { useContentStore } from '@/store/useContentStore'
 import { cn } from '@/lib/utils'
 
@@ -6,6 +6,12 @@ export function TabNavigation() {
   const { activeTab, setActiveTab, videoQueue } = useContentStore()
 
   const tabs = [
+    {
+      id: 'bogdana' as const,
+      label: 'Богдана',
+      icon: Wand2,
+      description: 'Пайплайн · Gemini',
+    },
     {
       id: 'text-to-post' as const,
       label: 'text-to-post',
