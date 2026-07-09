@@ -259,6 +259,8 @@ function instagramProxyPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Relative asset paths so the built index.html also opens from a subpath or file://.
+  base: './',
   plugins: [react(), nativeFfmpegPlugin(), captionsContentPlugin(), instagramProxyPlugin()],
   resolve: {
     alias: {
