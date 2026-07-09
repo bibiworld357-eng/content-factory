@@ -288,6 +288,9 @@ export interface WavespeedOptions {
   aspectRatio?: string
   intensity?: number
   extraImages?: string[] // additional base64 data URLs to append after the main image
+  // When false, skips the legacy hard-coded character DNA text + reference image.
+  // Needed by pipelines (e.g. Bogdana) whose identity comes from their own refs.
+  injectDefaultDna?: boolean
 }
 
 export async function editImageWithWavespeed(
@@ -298,17 +301,17 @@ export async function editImageWithWavespeed(
   onLog?: LogFn,
   options: WavespeedOptions = {}
 ): Promise<WavespeedResult> {
-  const { resolution = '1k', aspectRatio = '1:1', intensity = 50 } = options
+  const { resolution = '1k', aspectRatio = '1:1', intensity = 50, injectDefaultDna = true } = options
   onLog?.(`Запуск Nano Banana 2 кадр #${frameIndex + 1} [Разр: ${resolution} | AR: ${aspectRatio} | Инт.: ${intensity}]...`)
 
   const mimeType = imageBase64.startsWith('/9j/') ? 'image/jpeg' : 'image/png'
   const dataUrl = `data:${mimeType};base64,${imageBase64}`
-  const fullPrompt = `${DNA}\n\n${prompt}`
+  const fullPrompt = injectDefaultDna ? `${DNA}\n\n${prompt}` : prompt
 
   const imageStrength = Math.round((intensity / 100) * 100) / 100
 
-  // Load DNA reference image
-  const dnaRefImage = await loadDnaReferenceImage()
+  // Load the legacy DNA reference image only when the default DNA is requested.
+  const dnaRefImage = injectDefaultDna ? await loadDnaReferenceImage() : ''
 
   const payload = {
     images: [
@@ -2148,7 +2151,8 @@ export async function generateNanoBananaMultiRef(
   aspectRatio: string,
   resolution: string,
   count: number,
-  onLog?: LogFn
+  onLog?: LogFn,
+  injectDefaultDna = true
 ): Promise<NanoBananaMultiResult[]> {
   onLog?.(`🖼️ Запускаю ${count} генераций Nano Banana 2 Edit...`, 'info')
 
@@ -2159,7 +2163,7 @@ export async function generateNanoBananaMultiRef(
       prompt,
       i,
       onLog,
-      { resolution, aspectRatio, intensity: 50, extraImages: referenceImages.slice(1) }
+      { resolution, aspectRatio, intensity: 50, extraImages: referenceImages.slice(1), injectDefaultDna }
     ).then((res) => ({ imageUrl: res.imageUrl, index: i }))
   )
 
@@ -2177,6 +2181,50 @@ export async function generateNanoBananaMultiRef(
   if (successes.length === 0) throw new Error('Все варианты Nano Banana 2 завершились ошибкой')
   onLog?.(`✅ Получено ${successes.length}/${count} вариантов изображения`, 'success')
   return successes
+}
+
+// ── Bogdana image generation ────────────────────────────────────────────────
+// Model choices for the Bogdana pipeline's frame generation. Both skip the
+// legacy hard-coded character DNA so identity comes only from Bogdana's refs.
+export type BogdanaImageModel = 'nano-banana' | 'gpt-image'
+
+export const BOGDANA_IMAGE_MODELS: { id: BogdanaImageModel; label: string }[] = [
+  { id: 'nano-banana', label: 'Nano Banana 2' },
+  { id: 'gpt-image', label: 'GPT Image' },
+]
+
+export async function generateBogdanaFrame(
+  model: BogdanaImageModel,
+  wavespeedKey: string,
+  referenceImages: string[],
+  prompt: string,
+  aspectRatio: string,
+  resolution: string,
+  onLog?: LogFn
+): Promise<string | undefined> {
+  if (model === 'gpt-image') {
+    const res = await editImageWithGPTImage2(
+      wavespeedKey,
+      referenceImages,
+      prompt,
+      resolution,
+      aspectRatio,
+      onLog,
+      false
+    )
+    return res.imageUrl
+  }
+  const results = await generateNanoBananaMultiRef(
+    wavespeedKey,
+    referenceImages,
+    prompt,
+    aspectRatio,
+    resolution,
+    1,
+    onLog,
+    false
+  )
+  return results[0]?.imageUrl
 }
 
 // ── Convert any video to 9:16 aspect ratio (letterbox/pillarbox) ──────────
@@ -2806,13 +2854,14 @@ export async function editImageWithGPTImage2(
   prompt: string,
   resolution: string,
   aspectRatio: string,
-  onLog?: LogFn
+  onLog?: LogFn,
+  injectDefaultDna = true
 ): Promise<WavespeedResult> {
   onLog?.('🖼️ Запускаю GPT Image 2 Edit...', 'info')
 
-  // Load DNA reference image
-  const dnaRefImage = await loadDnaReferenceImage()
-  const fullPrompt = `${DNA}\n\n${prompt}`
+  // Load the legacy DNA reference image only when the default DNA is requested.
+  const dnaRefImage = injectDefaultDna ? await loadDnaReferenceImage() : ''
+  const fullPrompt = injectDefaultDna ? `${DNA}\n\n${prompt}` : prompt
 
   const apiUrl = import.meta.env.DEV
     ? '/api/wavespeed/v3/openai/gpt-image-2/edit'

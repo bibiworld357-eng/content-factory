@@ -33,11 +33,13 @@ import {
   type BogdanaScenario,
 } from '@/lib/gemini'
 import {
-  generateNanoBananaMultiRef,
+  generateBogdanaFrame,
+  BOGDANA_IMAGE_MODELS,
   submitKlingVideoTask,
   pollKlingResult,
   generateKlingAudioSequence,
   generateBogdanaThreadsPosts,
+  type BogdanaImageModel,
   type BogdanaThreadsPost,
 } from '@/lib/api'
 
@@ -153,6 +155,7 @@ export function BogdanaPipelinePanel() {
   const [refs, setRefs] = useState<NanoBananaReferenceSet>({})
   const [frames, setFrames] = useState<FrameResult[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
+  const [imageModel, setImageModel] = useState<BogdanaImageModel>('nano-banana')
 
   // Stage 3.3 — video + audio
   const [videoPairs, setVideoPairs] = useState<VideoPairResult[]>([])
@@ -219,16 +222,15 @@ export function BogdanaPipelinePanel() {
       const scene = scenario.scenes[i]
       try {
         const { prompt, referenceImages } = buildNanoBananaPrompt(scene.imagePrompt, refs, previousFrame)
-        const results = await generateNanoBananaMultiRef(
+        const imageUrl = await generateBogdanaFrame(
+          imageModel,
           apiKeys.wavespeed,
           referenceImages,
           prompt,
           '9:16',
           '1k',
-          1,
           addLog
         )
-        const imageUrl = results[0]?.imageUrl
         previousFrame = imageUrl ?? previousFrame
         setFrames((prev) =>
           prev.map((f, idx) => (idx === i ? { ...f, status: 'success', imageUrl } : f))
@@ -419,6 +421,26 @@ export function BogdanaPipelinePanel() {
                 onChange={setRef(slot.key)}
               />
             ))}
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground">Модель генерации</p>
+            <div className="flex flex-wrap gap-2">
+              {BOGDANA_IMAGE_MODELS.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setImageModel(m.id)}
+                  disabled={loadingImages}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50',
+                    imageModel === m.id
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border hover:border-primary/50'
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
             @image2 автоматически заменяется предыдущим кадром для консистентности. Суффикс:{' '}

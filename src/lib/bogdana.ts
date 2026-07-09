@@ -124,7 +124,13 @@ export function buildNanoBananaPrompt(
 
   const legend = legendLines.length ? `\n\nReference tags:\n${legendLines.join('\n')}` : ''
 
-  const prompt = `${basePrompt.trim()}${legend}\n\n${NANOBANANA_STYLE_SUFFIX}`
+  // Identity anchor so the frame renders Bogdana (from @image1) and never a
+  // different/default character.
+  const identity = refs.face
+    ? 'Subject: Bogdana — keep her exact face and identity from @image1. '
+    : 'Subject: Bogdana. '
+
+  const prompt = `${identity}${basePrompt.trim()}${legend}\n\n${NANOBANANA_STYLE_SUFFIX}`
 
   // Reference images ordered to match the @imageN tags.
   const referenceImages = [refs.face, sceneRef, refs.korzhik, refs.product].filter(
