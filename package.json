@@ -23,7 +23,6 @@
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
-    "@rolldown/binding-linux-x64-gnu": "^1.0.0-rc.12",
     "autoprefixer": "^10.4.27",
     "axios": "^1.14.0",
     "class-variance-authority": "^0.7.1",
