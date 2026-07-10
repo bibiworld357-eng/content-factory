@@ -79,12 +79,14 @@ export interface BogdanaScene {
   scene: number
   /** Scene role label: Хук / Появление Коржика / Исцеление / Финал. */
   title: string
-  /** Cinematic action description for the scene. */
+  /** Cinematic action/motion description for the scene (start -> end). */
   action: string
   /** On-screen subtitle (Bogdana never speaks with her mouth). */
   subtitle: string
-  /** Visual/image prompt for this scene (used later by NanoBanana). */
-  imagePrompt: string
+  /** Image prompt for the START frame of the scene. */
+  startImagePrompt: string
+  /** Image prompt for the END frame of the scene. */
+  endImagePrompt: string
 }
 
 export interface BogdanaScenario {
@@ -111,19 +113,21 @@ export async function generateBogdanaScenario(
   const userPrompt = `Продукт: ${product.name} — ${product.pain} (артикул ${product.article}).
 Выбранная идея: "${idea.title}" — ${idea.hook}.
 Распиши подробный сценарий РОВНО из 4 сцен по арке:
-1) Хук (пик абсурдной визуальной метафоры в первую секунду),
+1) Хук,
 2) Появление Коржика (корги-спасатель),
 3) Магическое исцеление витамином ${product.name},
 4) Счастливый финал.
+ВАЖНО про сцену 1 (Хук): её кадр НАЧАЛА (startImagePrompt) — это обычная, нормальная, спокойная Богдана в её привычном интерьере, без искажений (стабильный опорный кадр). Кадр КОНЦА (endImagePrompt) — момент, когда происходит абсурдное событие / визуальная метафора боли.
+У КАЖДОЙ сцены задай два визуальных промпта: startImagePrompt (кадр начала) и endImagePrompt (кадр конца) — между ними будет анимация. Поле action описывает движение от начала к концу.
 Богдана не говорит ртом — её мысли идут в титрах.
 Верни строгий JSON вида:
 {
   "ideaTitle": "${idea.title}",
   "scenes": [
-    { "scene": 1, "title": "Хук", "action": "<что происходит в кадре>", "subtitle": "<титр на экране>", "imagePrompt": "<визуальный промпт для кадра>" },
-    { "scene": 2, "title": "Появление Коржика", "action": "...", "subtitle": "...", "imagePrompt": "..." },
-    { "scene": 3, "title": "Исцеление", "action": "...", "subtitle": "...", "imagePrompt": "..." },
-    { "scene": 4, "title": "Финал", "action": "...", "subtitle": "...", "imagePrompt": "..." }
+    { "scene": 1, "title": "Хук", "action": "<движение от start к end>", "subtitle": "<титр на экране>", "startImagePrompt": "<обычная нормальная Богдана в интерьере>", "endImagePrompt": "<абсурдная метафора боли>" },
+    { "scene": 2, "title": "Появление Коржика", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." },
+    { "scene": 3, "title": "Исцеление", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." },
+    { "scene": 4, "title": "Финал", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." }
   ]
 }`
 

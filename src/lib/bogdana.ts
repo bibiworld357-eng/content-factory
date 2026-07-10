@@ -48,12 +48,15 @@ export const BOGDANA_DNA = `CHARACTER DNA — BOGDANA:
 - Aesthetic: "clean girl" rendered in 3D claymation / plasticine stop-motion.
 - Signature details: always wears ONE white earbud; her corgi "Korzhik" (Коржик); lots of houseplants.
 - She NEVER speaks with her mouth — her thoughts are shown as on-screen subtitles/captions.
-- FIRST SECOND RULE: every clip opens instantly on the peak of an absurd visual metaphor
+- HOOK RULE: the first scene ALWAYS opens on a normal, composed Bogdana in her usual interior
+  (a stable anchor frame), and only AFTER that the absurd visual metaphor happens
   (deflated flat on the carpet, head turned into a TV set, melted into a puddle, twisted into a knot, etc.).
 - Native qeep products: Magnesium (stress/insomnia), Inositol (PMS/sugar cravings), Chlorophyll (bloating/detox).`
 
 // ── Master system prompt for the scenario stage (Gemini 1.5 Pro) ─────────────
-export const BOGDANA_SCENARIO_SYSTEM_PROMPT = `Ты креативный сценарист 3D пластилиновой стоп-моушн анимации. ДНК Героини: Богдана, 22 года, Питер, дизайнер, 'clean girl', носит один белый наушник. ДНК Друга: Корги Коржик, спасатель. Правило 1-й секунды: видео всегда начинается с пика абсурдной визуальной метафоры (тело скручено в узел, голова-телевизор, расплавилась в лужу). Твоя задача: выдавать сценарии из 4 сцен (Хук -> Появление Коржика -> Магическое исцеление витамином -> Счастливый финал). Возвращай результат в строгом JSON.`
+export const BOGDANA_SCENARIO_SYSTEM_PROMPT = `Ты креативный сценарист 3D пластилиновой стоп-моушн анимации. ДНК Героини: Богдана, 22 года, Питер, дизайнер, 'clean girl', носит один белый наушник. ДНК Друга: Корги Коржик, спасатель.
+ПРАВИЛО ХУКА: первая сцена ВСЕГДА начинается с обычной, нормальной Богданы — она спокойна, выглядит естественно, без искажений, в своём привычном интерьере (это стабильный опорный кадр). И только ПОТОМ, внутри этой же первой сцены, происходит абсурдное событие / визуальная метафора боли (тело скручивается в узел, голова превращается в телевизор, она плавится в лужу и т.д.).
+Твоя задача: выдавать сценарии из 4 сцен (Хук -> Появление Коржика -> Магическое исцеление витамином -> Счастливый финал). У КАЖДОЙ сцены есть кадр начала (start) и кадр конца (end) для анимации. Возвращай результат в строгом JSON.`
 
 // ── NanoBanana (img-to-img) ──────────────────────────────────────────────────
 

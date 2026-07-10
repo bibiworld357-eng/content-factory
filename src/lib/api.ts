@@ -4643,44 +4643,55 @@ ${userWishes.trim() ? `Extra wishes: ${userWishes.trim()}\n` : ''}Return exactly
 export interface BogdanaThreadsPost {
   /** Detected trend / audience pain the post reacts to. */
   trend: string
-  /** Post body (triggering, ironic), with the article natively woven in. */
+  /** Post body (triggering, ironic), from the girl's POV. */
   text: string
-  /** qeep article referenced in the post. */
-  article: string
+  /** Whether this post natively integrates the qeep product. */
+  hasProduct: boolean
+  /** qeep article — present only for the single product-integration post. */
+  article?: string
 }
 
 /**
- * Stage 3.4: use Grok (X/Twitter access) to parse trends & audience pains
- * (burnout, remote work, women's health) and write triggering, ironic Threads
- * posts that natively embed the vitamin article.
+ * Stage 3.4: use Grok (X/Twitter access) to parse trends & audience pains and
+ * write viral, ironic Threads posts from the girl's POV. Most posts are on
+ * abstract/topical themes WITHOUT the product; exactly one softly integrates it.
  */
 export async function generateBogdanaThreadsPosts(
   grokKey: string,
   productId: BogdanaProductId,
   onLog?: LogFn,
-  count = 3
+  count = 5
 ): Promise<BogdanaThreadsPost[]> {
   const product = getBogdanaProduct(productId)
-  onLog?.(`🧵 Grok: парсю тренды и пишу ${count} постов для Threads про «${product.name}»...`, 'info')
+  const withoutProduct = Math.max(count - 1, 0)
+  onLog?.(`🧵 Grok: парсю тренды и пишу ${count} постов для Threads (${withoutProduct} без продукта + 1 с интеграцией)...`, 'info')
 
-  const systemPrompt = `You write viral, ironic Threads posts in Russian for a plasticine "clean girl" persona (Bogdana).
-Use X/Twitter trends and audience pains (burnout, remote work, women's health) as the hook.
-Goal: provoke arguments, laughter, or "this is so me" comments. Natively weave in the product article.
+  const systemPrompt = `You write viral, ironic Threads posts in Russian, first-person, from a young woman's POV (Bogdana — a 22 y.o. designer from Saint Petersburg, "clean girl").
+Use current X/Twitter trends and audience pains (burnout, remote work, women's health, relationships, everyday absurd) as hooks.
+Goal: provoke arguments, laughter, or "это я" comments.
+IMPORTANT: Most posts must be pure lifestyle/topical takes WITHOUT any product or brand mention. Only ONE post may softly, natively integrate the product — no ads tone, no hard article dumping.
 Return ONLY raw JSON, no markdown.`
 
-  const userPrompt = `Продукт: ${product.name} — снимает ${product.pain}. Артикул: ${product.article}.
-Найди актуальные тренды и боли аудитории (выгорание, удалёнка, женское здоровье) и напиши ${count} максимально триггерных, ироничных поста для Threads.
-В каждый пост нативно вшей артикул ${product.article}.
+  const userPrompt = `Напиши ровно ${count} виральных, ироничных поста для Threads от лица девушки (Богданы).
+- ${withoutProduct} постов — на отвлечённые актуальные темы (выгорание, удалёнка, женское здоровье, отношения, бытовой абсурд), БЕЗ упоминания продукта или бренда. Для них "hasProduct": false и без поля article.
+- 1 пост — мягкая нативная интеграция продукта ${product.name} (снимает ${product.pain}); упомяни артикул ${product.article} ненавязчиво, без рекламного тона. Для него "hasProduct": true и "article": "${product.article}".
 Верни строгий JSON-массив вида:
-[{ "trend": "<тренд/боль, на которую опирается пост>", "text": "<текст поста с нативно вшитым артикулом>", "article": "${product.article}" }]`
+[
+  { "trend": "<тренд/боль>", "text": "<текст поста>", "hasProduct": false },
+  { "trend": "<тренд/боль>", "text": "<текст поста с мягкой интеграцией>", "hasProduct": true, "article": "${product.article}" }
+]`
 
   const raw = await callGrokJson(grokKey, systemPrompt, userPrompt)
   const posts = parseJsonArray<BogdanaThreadsPost>(raw)
-    .map((p) => ({
-      trend: String(p.trend ?? ''),
-      text: String(p.text ?? ''),
-      article: String(p.article ?? product.article),
-    }))
+    .map((p) => {
+      const hasProduct = Boolean(p.hasProduct)
+      return {
+        trend: String(p.trend ?? ''),
+        text: String(p.text ?? ''),
+        hasProduct,
+        ...(hasProduct ? { article: String(p.article ?? product.article) } : {}),
+      }
+    })
     .filter((p) => p.text.length > 0)
 
   if (posts.length === 0) throw new Error('Grok не вернул посты для Threads')

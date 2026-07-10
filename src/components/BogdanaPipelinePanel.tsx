@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import {
   Sparkles,
@@ -12,6 +12,7 @@ import {
   Check,
   X,
   ImageIcon,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -52,13 +53,23 @@ const REFERENCE_SLOTS: Array<{ key: RefKey; tag: string; label: string }> = [
   { key: 'product', tag: '@image4', label: 'Баночка qeep' },
 ]
 
-interface FrameResult {
-  scene: number
-  title: string
+type FrameStatus = 'pending' | 'loading' | 'success' | 'error'
+
+interface FrameSlot {
   imageUrl?: string
-  status: 'pending' | 'loading' | 'success' | 'error'
+  status: FrameStatus
   error?: string
 }
+
+/** Each scene produces two frames — a start and an end — for Kling animation. */
+interface SceneFrames {
+  scene: number
+  title: string
+  start: FrameSlot
+  end: FrameSlot
+}
+
+const isSceneBusy = (sf: SceneFrames) => sf.start.status === 'loading' || sf.end.status === 'loading'
 
 interface VideoPairResult {
   pairIndex: number
@@ -151,11 +162,17 @@ export function BogdanaPipelinePanel() {
   const [loadingIdeas, setLoadingIdeas] = useState(false)
   const [loadingScenario, setLoadingScenario] = useState(false)
 
-  // Stage 3.2 — images
+  // Stage 3.2 — images (2 frames per scene: start + end)
   const [refs, setRefs] = useState<NanoBananaReferenceSet>({})
-  const [frames, setFrames] = useState<FrameResult[]>([])
+  const [sceneFrames, setSceneFrames] = useState<SceneFrames[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
   const [imageModel, setImageModel] = useState<BogdanaImageModel>('nano-banana')
+
+  // Mirror of sceneFrames for reading the latest values inside async generators.
+  const sceneFramesRef = useRef<SceneFrames[]>([])
+  useEffect(() => {
+    sceneFramesRef.current = sceneFrames
+  }, [sceneFrames])
 
   // Stage 3.3 — video + audio
   const [videoPairs, setVideoPairs] = useState<VideoPairResult[]>([])
@@ -193,11 +210,56 @@ export function BogdanaPipelinePanel() {
     try {
       const result = await generateBogdanaScenario(apiKeys.gemini, productId, ideas[selectedIdea], addLog)
       setScenario(result)
-      setFrames(result.scenes.map((s) => ({ scene: s.scene, title: s.title, status: 'pending' })))
+      setSceneFrames(
+        result.scenes.map((s) => ({
+          scene: s.scene,
+          title: s.title,
+          start: { status: 'pending' },
+          end: { status: 'pending' },
+        }))
+      )
     } catch (err) {
       addLog(`Gemini: ${err instanceof Error ? err.message : 'ошибка'}`, 'error')
     } finally {
       setLoadingScenario(false)
+    }
+  }
+
+  /** Generate a single frame (with @image2 = previous frame for consistency). */
+  async function generateFrame(prompt: string, previousFrame?: string): Promise<string | undefined> {
+    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, refs, previousFrame)
+    return generateBogdanaFrame(imageModel, apiKeys.wavespeed, referenceImages, full, '9:16', '1k', addLog)
+  }
+
+  const patchSlot = (i: number, slot: 'start' | 'end', value: FrameSlot) =>
+    setSceneFrames((prev) => prev.map((sf, idx) => (idx === i ? { ...sf, [slot]: value } : sf)))
+
+  /**
+   * Generate both frames (start + end) for one scene.
+   * The start frame reuses the previous scene's end frame as @image2 for room/
+   * camera consistency; the end frame reuses this scene's fresh start frame.
+   */
+  async function generateSceneFrames(i: number) {
+    if (!scenario) return
+    const scene = scenario.scenes[i]
+    patchSlot(i, 'start', { status: 'loading' })
+    patchSlot(i, 'end', { status: 'loading' })
+
+    const prevSceneEnd = i > 0 ? sceneFramesRef.current[i - 1]?.end.imageUrl : undefined
+
+    let startUrl: string | undefined
+    try {
+      startUrl = await generateFrame(scene.startImagePrompt, prevSceneEnd)
+      patchSlot(i, 'start', startUrl ? { status: 'success', imageUrl: startUrl } : { status: 'error', error: 'нет изображения' })
+    } catch (err) {
+      patchSlot(i, 'start', { status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
+    }
+
+    try {
+      const endUrl = await generateFrame(scene.endImagePrompt, startUrl ?? prevSceneEnd)
+      patchSlot(i, 'end', endUrl ? { status: 'success', imageUrl: endUrl } : { status: 'error', error: 'нет изображения' })
+    } catch (err) {
+      patchSlot(i, 'end', { status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
     }
   }
 
@@ -208,46 +270,27 @@ export function BogdanaPipelinePanel() {
       return
     }
     setLoadingImages(true)
-    const next: FrameResult[] = scenario.scenes.map((s) => ({
-      scene: s.scene,
-      title: s.title,
-      status: 'loading',
-    }))
-    setFrames(next)
-
-    // Frames are generated sequentially so each frame can reuse the previous one
-    // as @image2 (scene reference) for 100% room/camera consistency.
-    let previousFrame: string | undefined
     for (let i = 0; i < scenario.scenes.length; i++) {
-      const scene = scenario.scenes[i]
-      try {
-        const { prompt, referenceImages } = buildNanoBananaPrompt(scene.imagePrompt, refs, previousFrame)
-        const imageUrl = await generateBogdanaFrame(
-          imageModel,
-          apiKeys.wavespeed,
-          referenceImages,
-          prompt,
-          '9:16',
-          '1k',
-          addLog
-        )
-        previousFrame = imageUrl ?? previousFrame
-        setFrames((prev) =>
-          prev.map((f, idx) => (idx === i ? { ...f, status: 'success', imageUrl } : f))
-        )
-      } catch (err) {
-        setFrames((prev) =>
-          prev.map((f, idx) =>
-            idx === i ? { ...f, status: 'error', error: err instanceof Error ? err.message : 'ошибка' } : f
-          )
-        )
-      }
+      await generateSceneFrames(i)
     }
     setLoadingImages(false)
   }
 
+  async function handleRegenerateScene(i: number) {
+    if (!refs.face) {
+      addLog('Загрузите хотя бы @image1 (лицо Богданы)', 'error')
+      return
+    }
+    setLoadingImages(true)
+    await generateSceneFrames(i)
+    setLoadingImages(false)
+  }
+
   async function handleGenerateVideos() {
-    const ready = frames.filter((f) => f.status === 'success' && f.imageUrl)
+    // Flatten to an ordered list [s1.start, s1.end, s2.start, s2.end, ...] so
+    // Kling pairs each scene's start+end frame (1→2, 3→4, 5→6, 7→8).
+    const ordered = sceneFrames.flatMap((sf) => [sf.start, sf.end])
+    const ready = ordered.filter((f) => f.status === 'success' && f.imageUrl) as { imageUrl?: string }[]
     const pairs = buildKlingFramePairs(ready)
     if (pairs.length === 0) {
       addLog('Нужно минимум 2 готовых кадра для пары Start→End', 'error')
@@ -443,27 +486,47 @@ export function BogdanaPipelinePanel() {
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            @image2 автоматически заменяется предыдущим кадром для консистентности. Суффикс:{' '}
+            8 кадров — по 2 на сцену (start + end). @image2 автоматически заменяется предыдущим кадром для консистентности. Суффикс:{' '}
             <span className="font-mono">{NANOBANANA_STYLE_SUFFIX}</span>
           </p>
           <Button onClick={handleGenerateImages} disabled={!scenario || loadingImages} size="sm">
             {loadingImages ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-            Сгенерировать кадры
+            Сгенерировать все кадры
           </Button>
-          {frames.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {frames.map((f) => (
-                <div key={f.scene} className="rounded-lg border border-border overflow-hidden">
-                  <div className="aspect-[9/16] bg-card flex items-center justify-center">
-                    {f.imageUrl ? (
-                      <img src={f.imageUrl} alt={f.title} className="w-full h-full object-cover" />
-                    ) : f.status === 'loading' ? (
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground px-2 text-center">{f.error ?? 'ожидание'}</span>
-                    )}
+          {sceneFrames.length > 0 && (
+            <div className="space-y-3">
+              {sceneFrames.map((sf, i) => (
+                <div key={sf.scene} className="rounded-lg border border-border p-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-primary">Сцена {sf.scene} — {sf.title}</span>
+                    <button
+                      onClick={() => handleRegenerateScene(i)}
+                      disabled={loadingImages || isSceneBusy(sf)}
+                      className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary disabled:opacity-50 transition-colors"
+                    >
+                      <RefreshCw className={cn('h-3 w-3', isSceneBusy(sf) && 'animate-spin')} />
+                      перегенерировать
+                    </button>
                   </div>
-                  <div className="px-2 py-1 text-[10px] text-muted-foreground">Сцена {f.scene}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { slot: sf.start, label: 'Start' },
+                      { slot: sf.end, label: 'End' },
+                    ] as const).map(({ slot, label }) => (
+                      <div key={label} className="rounded-lg border border-border overflow-hidden">
+                        <div className="aspect-[9/16] bg-card flex items-center justify-center">
+                          {slot.imageUrl ? (
+                            <img src={slot.imageUrl} alt={`${sf.title} ${label}`} className="w-full h-full object-cover" />
+                          ) : slot.status === 'loading' ? (
+                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground px-2 text-center">{slot.error ?? 'ожидание'}</span>
+                          )}
+                        </div>
+                        <div className="px-2 py-1 text-[10px] text-muted-foreground">{label}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
@@ -526,11 +589,23 @@ export function BogdanaPipelinePanel() {
           </Button>
           {threads.map((post, i) => (
             <div key={i} className="p-3 rounded-lg border border-border bg-card/50">
-              <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                <Check className="h-3 w-3 text-emerald-500" /> тренд: {post.trend}
+              <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-2">
+                <span className="flex items-center gap-1">
+                  <Check className="h-3 w-3 text-emerald-500" /> тренд: {post.trend}
+                </span>
+                <span
+                  className={cn(
+                    'px-1.5 py-0.5 rounded text-[10px]',
+                    post.hasProduct ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {post.hasProduct ? 'с продуктом' : 'без продукта'}
+                </span>
               </div>
               <p className="text-sm whitespace-pre-wrap">{post.text}</p>
-              <div className="text-[11px] font-mono text-primary mt-1">{post.article}</div>
+              {post.hasProduct && post.article && (
+                <div className="text-[11px] font-mono text-primary mt-1">{post.article}</div>
+              )}
             </div>
           ))}
         </CardContent>
