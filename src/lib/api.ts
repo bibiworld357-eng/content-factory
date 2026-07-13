@@ -28,9 +28,6 @@ export function bearer(key: string, service = 'API'): string {
 
 export const DNA = `A young woman with subtle, natural heterochromia — her left eye is a soft, realistic blue and her right eye is a natural warm brown, both matching the brightness and lighting of the environment without appearing overly vivid. She has long black hair with a full straight fringe and soft natural waves reaching to the chest.`
 
-// IceShelf Kling Element ID - for consistent character in video generation
-export const ICESHELF_ELEMENT_ID = '310069756440507'
-
 // DNA Reference Image - Base64 encoded face reference
 // This image will be sent as second reference to Nano Banana 2 Edit API
 export const DNA_REFERENCE_IMAGE = '/dna-reference.jpg' // Will be loaded dynamically
@@ -755,19 +752,17 @@ export async function submitKlingVideoTask(
 
   const hasEndFrame = endImage && endImage.trim().length > 0
   onLog?.(`Отправка задачи в Kling [${modelEndpoint.split('/')[2] ?? 'kling'}, ${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
-  onLog?.(`✨ IceShelf Element (${ICESHELF_ELEMENT_ID}) применен для консистентности персонажа`, 'success')
 
   // Always inject the "Static camera" tag to prevent background flicker.
   const motionPrompt = withStaticCamera(prompt)
 
   const payload: Record<string, unknown> = {
     image: imageUrl,
-    prompt: `${DNA}\n\n${motionPrompt}`,
+    prompt: motionPrompt,
     duration,
     aspect_ratio: aspectRatio,
     cfg_scale: cfgScale,
     enable_audio: withSound,
-    element_list: [{ element_id: ICESHELF_ELEMENT_ID }], // ALWAYS include IceShelf element for character consistency
   }
 
   if (negativePrompt && negativePrompt.trim()) {
