@@ -360,6 +360,32 @@ export function BogdanaPipelinePanel() {
     setLoadingImages(false)
   }
 
+  /** Regenerate only one frame (start or end) of a scene, keeping the other intact. */
+  async function handleRegenerateFrame(i: number, slot: 'start' | 'end') {
+    if (!scenario) return
+    if (!refs.face) {
+      addLog('Загрузите хотя бы @image1 (лицо Богданы)', 'error')
+      return
+    }
+    const scene = scenario.scenes[i]
+    const prompt = slot === 'start' ? scene.startImagePrompt : scene.endImagePrompt
+    // For the end frame continue from this scene's start; otherwise from the last successful frame.
+    const startFrame = sceneFramesRef.current[i]?.start
+    const continuity =
+      slot === 'end' && startFrame?.status === 'success' && startFrame.imageUrl
+        ? startFrame.imageUrl
+        : getLastSuccessfulFrameBeforeScene(i)
+    setLoadingImages(true)
+    patchSlot(i, slot, { status: 'loading' })
+    try {
+      const url = await generateFrame(prompt, continuity)
+      patchSlot(i, slot, url ? { status: 'success', imageUrl: url } : { status: 'error', error: 'нет изображения' })
+    } catch (err) {
+      patchSlot(i, slot, { status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
+    }
+    setLoadingImages(false)
+  }
+
   async function handleGenerateVideos() {
     const jobs = videoCandidates
       .map((c) => ({ ...c, opt: getVideoOpt(c) }))
@@ -597,9 +623,9 @@ export function BogdanaPipelinePanel() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {([
-                      { slot: sf.start, label: 'Start' },
-                      { slot: sf.end, label: 'End' },
-                    ] as const).map(({ slot, label }) => (
+                      { slot: sf.start, label: 'Start', key: 'start' },
+                      { slot: sf.end, label: 'End', key: 'end' },
+                    ] as const).map(({ slot, label, key }) => (
                       <div key={label} className="rounded-lg border border-border overflow-hidden">
                         <div className="aspect-[9/16] bg-card flex items-center justify-center">
                           {slot.imageUrl ? (
@@ -610,7 +636,18 @@ export function BogdanaPipelinePanel() {
                             <span className="text-[10px] text-muted-foreground px-2 text-center">{slot.error ?? 'ожидание'}</span>
                           )}
                         </div>
-                        <div className="px-2 py-1 text-[10px] text-muted-foreground">{label}</div>
+                        <div className="px-2 py-1 flex items-center justify-between">
+                          <span className="text-[10px] text-muted-foreground">{label}</span>
+                          <button
+                            onClick={() => handleRegenerateFrame(i, key)}
+                            disabled={loadingImages || isSceneBusy(sf)}
+                            title={`Перегенерировать ${label}`}
+                            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary disabled:opacity-50 transition-colors"
+                          >
+                            <RefreshCw className={cn('h-3 w-3', slot.status === 'loading' && 'animate-spin')} />
+                            заново
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
