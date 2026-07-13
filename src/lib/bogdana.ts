@@ -188,24 +188,24 @@ export interface NanoBananaPromptResult {
  * Build a NanoBanana prompt with the fixed @imageN tag legend and the mandatory
  * style suffix, and collect the reference images in @image1..@image4 order.
  *
- * `previousFrame`, when provided, is substituted for @image2 (scene reference)
- * so that every subsequent frame reuses the previously generated frame — this
- * keeps the room/camera 100% consistent across the sequence.
+ * `previousFrame`, when provided, is treated as the primary continuity reference
+ * and placed first in the edit reference list so every subsequent frame continues
+ * from the last successfully generated image instead of starting a new scene.
  */
 export function buildNanoBananaPrompt(
   basePrompt: string,
   refs: NanoBananaReferenceSet,
   previousFrame?: string
 ): NanoBananaPromptResult {
-  const sceneRef = previousFrame ?? refs.scene
-
   const legendLines: string[] = []
-  if (refs.face) legendLines.push(`${NANOBANANA_IMAGE_TAGS.face} = Bogdana's face (keep identity exact)`)
-  if (sceneRef)
+  if (previousFrame)
     legendLines.push(
-      `${NANOBANANA_IMAGE_TAGS.scene} = scene/background reference${
-        previousFrame ? ' (previous generated frame — keep room & camera identical)' : ''
-      }`
+      `${NANOBANANA_IMAGE_TAGS.scene} = previous generated frame / previous successful frame (highest priority continuity reference; preserve composition, camera, lighting, environment, materials, colors, and style unless the prompt explicitly changes them)`
+    )
+  if (refs.face) legendLines.push(`${NANOBANANA_IMAGE_TAGS.face} = Bogdana's face (keep identity exact)`)
+  if (refs.scene)
+    legendLines.push(
+      `${previousFrame ? 'Scene/background reference (lower priority than the continuity reference)' : `${NANOBANANA_IMAGE_TAGS.scene} = scene/background reference`}`
     )
   if (refs.korzhik) legendLines.push(`${NANOBANANA_IMAGE_TAGS.korzhik} = Korzhik the corgi`)
   if (refs.product) legendLines.push(`${NANOBANANA_IMAGE_TAGS.product} = qeep product jar`)
@@ -221,9 +221,11 @@ export function buildNanoBananaPrompt(
   const prompt = `${identity}${basePrompt.trim()}${legend}\n\n${NANOBANANA_STYLE_SUFFIX}`
 
   // Reference images ordered to match the @imageN tags.
-  const referenceImages = [refs.face, sceneRef, refs.korzhik, refs.product].filter(
-    (img): img is string => typeof img === 'string' && img.length > 0
-  )
+  const referenceImages = (
+    previousFrame
+      ? [refs.face, previousFrame, refs.korzhik, refs.product, refs.scene]
+      : [refs.face, refs.scene, refs.korzhik, refs.product]
+  ).filter((img): img is string => typeof img === 'string' && img.length > 0)
 
   return { prompt, referenceImages }
 }

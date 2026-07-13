@@ -225,42 +225,56 @@ export function BogdanaPipelinePanel() {
     }
   }
 
-  /** Generate a single frame (with @image2 = previous frame for consistency). */
-  async function generateFrame(prompt: string, previousFrame?: string): Promise<string | undefined> {
-    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, refs, previousFrame)
+  /** Generate a single frame using the last successful frame as the top-priority visual reference. */
+  async function generateFrame(prompt: string, continuityFrame?: string): Promise<string | undefined> {
+    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, refs, continuityFrame)
     return generateBogdanaFrame(imageModel, apiKeys.wavespeed, referenceImages, full, '9:16', '1k', addLog)
   }
 
   const patchSlot = (i: number, slot: 'start' | 'end', value: FrameSlot) =>
     setSceneFrames((prev) => prev.map((sf, idx) => (idx === i ? { ...sf, [slot]: value } : sf)))
 
+  const getLastSuccessfulFrameBeforeScene = (sceneIndex: number) => {
+    const ordered = sceneFramesRef.current.flatMap((sf) => [sf.start, sf.end])
+    const cutoff = Math.max(sceneIndex * 2, 0)
+    for (let i = cutoff - 1; i >= 0; i--) {
+      const frame = ordered[i]
+      if (frame?.status === 'success' && frame.imageUrl) return frame.imageUrl
+    }
+    return undefined
+  }
+
   /**
    * Generate both frames (start + end) for one scene.
-   * The start frame reuses the previous scene's end frame as @image2 for room/
-   * camera consistency; the end frame reuses this scene's fresh start frame.
+   * Every new frame uses the latest successful frame as the primary continuity
+   * reference, and failures do not reset that chain.
    */
-  async function generateSceneFrames(i: number) {
+  async function generateSceneFrames(i: number, initialContinuity?: string) {
     if (!scenario) return
     const scene = scenario.scenes[i]
     patchSlot(i, 'start', { status: 'loading' })
     patchSlot(i, 'end', { status: 'loading' })
 
-    const prevSceneEnd = i > 0 ? sceneFramesRef.current[i - 1]?.end.imageUrl : undefined
+    let continuityFrame = initialContinuity ?? getLastSuccessfulFrameBeforeScene(i)
 
     let startUrl: string | undefined
     try {
-      startUrl = await generateFrame(scene.startImagePrompt, prevSceneEnd)
+      startUrl = await generateFrame(scene.startImagePrompt, continuityFrame)
       patchSlot(i, 'start', startUrl ? { status: 'success', imageUrl: startUrl } : { status: 'error', error: 'нет изображения' })
+      if (startUrl) continuityFrame = startUrl
     } catch (err) {
       patchSlot(i, 'start', { status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
     }
 
     try {
-      const endUrl = await generateFrame(scene.endImagePrompt, startUrl ?? prevSceneEnd)
+      const endUrl = await generateFrame(scene.endImagePrompt, continuityFrame)
       patchSlot(i, 'end', endUrl ? { status: 'success', imageUrl: endUrl } : { status: 'error', error: 'нет изображения' })
+      if (endUrl) continuityFrame = endUrl
     } catch (err) {
       patchSlot(i, 'end', { status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
     }
+
+    return continuityFrame
   }
 
   async function handleGenerateImages() {
@@ -270,8 +284,9 @@ export function BogdanaPipelinePanel() {
       return
     }
     setLoadingImages(true)
+    let continuityFrame: string | undefined
     for (let i = 0; i < scenario.scenes.length; i++) {
-      await generateSceneFrames(i)
+      continuityFrame = await generateSceneFrames(i, continuityFrame)
     }
     setLoadingImages(false)
   }
@@ -486,7 +501,7 @@ export function BogdanaPipelinePanel() {
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            8 кадров — по 2 на сцену (start + end). @image2 автоматически заменяется предыдущим кадром для консистентности. Суффикс:{' '}
+            8 кадров — по 2 на сцену (start + end). Последний успешный кадр автоматически становится главным референсом для следующего. Суффикс:{' '}
             <span className="font-mono">{NANOBANANA_STYLE_SUFFIX}</span>
           </p>
           <Button onClick={handleGenerateImages} disabled={!scenario || loadingImages} size="sm">
