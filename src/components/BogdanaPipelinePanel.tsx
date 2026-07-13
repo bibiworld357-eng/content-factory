@@ -267,9 +267,26 @@ export function BogdanaPipelinePanel() {
     }
   }
 
+  /**
+   * Only pass the Korzhik / product reference images when the current frame's
+   * prompt actually mentions them. Otherwise those references anchor the corgi
+   * and the jar into every frame (e.g. the scene-1 hook), which contradicts the
+   * scenario rule that Korzhik appears in scene 2/3 and brings the product.
+   */
+  const scopeRefsToPrompt = (prompt: string): NanoBananaReferenceSet => {
+    const p = prompt.toLowerCase()
+    const mentionsKorzhik = /korzhik|коржик|corgi|корги|dog|соба/.test(p)
+    const mentionsProduct = /product|продукт|баночк|бутыл|jar|bottle|qeep|стакан|glass|supplement|капсул|magnesium|магни|инозитол|inositol|хлорофилл|chlorophyll/.test(p)
+    return {
+      ...refs,
+      korzhik: mentionsKorzhik ? refs.korzhik : undefined,
+      product: mentionsProduct ? refs.product : undefined,
+    }
+  }
+
   /** Generate a single frame using the last successful frame as the top-priority visual reference. */
   async function generateFrame(prompt: string, continuityFrame?: string): Promise<string | undefined> {
-    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, refs, continuityFrame)
+    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, scopeRefsToPrompt(prompt), continuityFrame)
     return generateBogdanaFrame(imageModel, apiKeys.wavespeed, referenceImages, full, '9:16', '1k', addLog)
   }
 
