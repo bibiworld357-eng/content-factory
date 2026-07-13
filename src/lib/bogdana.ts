@@ -20,19 +20,19 @@ export const BOGDANA_PRODUCTS: BogdanaProduct[] = [
     id: 'magnesium',
     name: 'Магний',
     pain: 'стресс и бессонница (stress & insomnia)',
-    article: 'QEEP-MG-01',
+    article: '#WW405041',
   },
   {
     id: 'inositol',
     name: 'Инозитол',
     pain: 'ПМС и тяга к сладкому (PMS & sugar cravings)',
-    article: 'QEEP-INO-02',
+    article: '#WW405049',
   },
   {
     id: 'chlorophyll',
     name: 'Хлорофилл',
     pain: 'отёки и детокс (bloating & detox)',
-    article: 'QEEP-CHL-03',
+    article: '#WW405040',
   },
 ]
 
@@ -48,15 +48,100 @@ export const BOGDANA_DNA = `CHARACTER DNA — BOGDANA:
 - Aesthetic: "clean girl" rendered in 3D claymation / plasticine stop-motion.
 - Signature details: always wears ONE white earbud; her corgi "Korzhik" (Коржик); lots of houseplants.
 - She NEVER speaks with her mouth — her thoughts are shown as on-screen subtitles/captions.
-- HOOK RULE: the first scene ALWAYS opens on a normal, composed Bogdana in her usual interior
-  (a stable anchor frame), and only AFTER that the absurd visual metaphor happens
-  (deflated flat on the carpet, head turned into a TV set, melted into a puddle, twisted into a knot, etc.).
-- Native qeep products: Magnesium (stress/insomnia), Inositol (PMS/sugar cravings), Chlorophyll (bloating/detox).`
+- Native products: Magnesium (#WW405041), Inositol (#WW405049), Chlorophyll (#WW405040).`
 
-// ── Master system prompt for the scenario stage (Gemini 1.5 Pro) ─────────────
-export const BOGDANA_SCENARIO_SYSTEM_PROMPT = `Ты креативный сценарист 3D пластилиновой стоп-моушн анимации. ДНК Героини: Богдана, 22 года, Питер, дизайнер, 'clean girl', носит один белый наушник. ДНК Друга: Корги Коржик, спасатель.
-ПРАВИЛО ХУКА: первая сцена ВСЕГДА начинается с обычной, нормальной Богданы — она спокойна, выглядит естественно, без искажений, в своём привычном интерьере (это стабильный опорный кадр). И только ПОТОМ, внутри этой же первой сцены, происходит абсурдное событие / визуальная метафора боли (тело скручивается в узел, голова превращается в телевизор, она плавится в лужу и т.д.).
-Твоя задача: выдавать сценарии из 4 сцен (Хук -> Появление Коржика -> Магическое исцеление витамином -> Счастливый финал). У КАЖДОЙ сцены есть кадр начала (start) и кадр конца (end) для анимации. Возвращай результат в строгом JSON.`
+interface BogdanaMasterPromptSpec {
+  title: string
+  article: string
+  locationRule: string
+  propsRule: string
+  hookRule: string
+  glowRule: string
+  audioRule: string
+}
+
+const BOGDANA_MASTER_PROMPT_SPECS: Record<BogdanaProductId, BogdanaMasterPromptSpec> = {
+  magnesium: {
+    title: 'МАГНИЙ (Стресс, бессонница, зажимы)',
+    article: '#WW405041',
+    locationRule:
+      'Все 4 сцены ролика должны происходить строго в одном месте (например, только на сером диване, ИЛИ только за рабочим столом, ИЛИ только в кровати). Локация не меняется!',
+    propsRule:
+      'Не вводи в кадр новые предметы мебели или сложный реквизит. В кадре только Богдана, базовый фон, Коржик и баночка Магния.',
+    hookRule:
+      'На секунде 0:00 тело или голова Богданы подвергается абсурдной деформации от стресса (например: скручивается в морской узел, голова взрывается на кубики, дрожит и вибрирует, покрывается трещинами).',
+    glowRule: 'Магическое исцеление всегда сопровождается мягким ЛАВАНДОВЫМ/ФИОЛЕТОВЫМ свечением.',
+    audioRule: 'Звуки скрипа, треска, магического звона.',
+  },
+  inositol: {
+    title: 'ИНОЗИТОЛ (ПМС, эмоции, тяга к сладкому)',
+    article: '#WW405049',
+    locationRule:
+      'Все 4 сцены ролика должны происходить строго в одном месте (например, только за столом, ИЛИ только на ковре). Локация не меняется!',
+    propsRule:
+      'Не выдумывай лишний реквизит. В кадре только Богдана, Коржик, баночка Инозитола и, если нужно для сюжета, один кусок еды (например, пончик).',
+    hookRule:
+      'На секунде 0:00 эмоции Богданы визуализируются через физический абсурд (тело разрывается на синюю и красную половину, голова превращается в кубик Рубика, из глаз бьют водопады слез, рот засасывает еду как пылесос).',
+    glowRule: 'Магическое исцеление всегда сопровождается мягким РОЗОВЫМ/ЗОЛОТИСТЫМ свечением.',
+    audioRule: 'Звуки всхлипов, растягивающейся резины, пылесоса.',
+  },
+  chlorophyll: {
+    title: 'ХЛОРОФИЛЛ (Отеки, тяжесть, детокс)',
+    article: '#WW405040',
+    locationRule:
+      'Все 4 сцены ролика должны происходить строго в одном месте (например, только перед зеркалом, ИЛИ только на кровати). Локация не меняется!',
+    propsRule:
+      'В сцене спасения Коржик ОБЯЗАТЕЛЬНО должен принести/пододвинуть ПРОЗРАЧНЫЙ СТАКАН С ЯРКО-ЗЕЛЕНОЙ ВОДОЙ. Сама бутылочка Хлорофилла просто стоит рядом. В кадре только Богдана, фон, Коржик, стакан с зельем и баночка. Ничего лишнего.',
+    hookRule:
+      'На секунде 0:00 тело Богданы деформируется от тяжести или сухости (превращается в свинцовые гири, растекается как лужа, покрывается колючками кактуса, каменеет).',
+    glowRule: 'Магическое исцеление всегда сопровождается ЯРКИМ ИЗУМРУДНО-ЗЕЛЕНЫМ свечением изнутри тела.',
+    audioRule: 'Звуки сдувания, плеска воды, тяжелых ударов.',
+  },
+}
+
+export function getBogdanaMasterPrompt(productId: BogdanaProductId): string {
+  const product = getBogdanaProduct(productId)
+  const spec = BOGDANA_MASTER_PROMPT_SPECS[productId]
+  return `Ты — профессиональный сценарист виральных пластилиновых stop-motion роликов. Твоя цель: написать сценарий на 15 секунд для продвижения ${product.name} (арт. ${spec.article}).
+
+ДНК ПЕРСОНАЖЕЙ И СТИЛЯ:
+- Богдана: 22 года, дизайнер на удаленке. Эстетика "clean girl". Пластилиновые волосы, один белый беспроводной наушник в ухе.
+- Коржик: Пластилиновый рыже-белый корги, собака-спасатель.
+- Стиль: 3D Claymation, высокая детализация, видны отпечатки пальцев на пластилине.
+- Озвучка: ПЕРСОНАЖИ НЕ ГОВОРЯТ. Голосовой озвучки (voiceover) нет. Все мысли передаются только через короткий всплывающий ТЕКСТ НА ЭКРАНЕ.
+
+ТЕМА ПРОДУКТА (${product.name.toUpperCase()}):
+${spec.glowRule.replace('Магическое исцеление всегда сопровождается ', '')}
+
+ЖЕСТКИЕ ПРАВИЛА ГЕНЕРАЦИИ (КРИТИЧЕСКИ ВАЖНО):
+1. ПРАВИЛО ЕДИНОЙ ЛОКАЦИИ: ${spec.locationRule}
+2. ЗАПРЕТ НА ЛИШНИЕ ПРЕДМЕТЫ: ${spec.propsRule}
+3. ПРАВИЛО ХУКА: ${spec.hookRule}
+
+СТРУКТУРА ВЫВОДА:
+Выдай строгий JSON с полями:
+- "on_screen_text": Короткие, емкие фразы для титров на экране (жиза без сленга, 3-4 предложения на весь ролик).
+- "nanobanana_prompts": Промпты для генерации 8 картинок (Начало и Конец для каждой из 4 сцен). В промптах обязательно указывай теги @image.
+- "kling_animation": Промпты для анимации в Kling (с обязательным тегом "Static camera").
+- "kling_audio": Промпты для звуков (до 200 символов, ${spec.audioRule})
+
+Дополнительно:
+- В каждой сцене должны быть кадры START и END.
+- Сцены остаются в пределах одной локации.
+- Исцеление всегда сопровождается ${spec.glowRule.toLowerCase()}`
+}
+
+export function getBogdanaIdeaSystemPrompt(productId: BogdanaProductId): string {
+  const product = getBogdanaProduct(productId)
+  const spec = BOGDANA_MASTER_PROMPT_SPECS[productId]
+  return `${BOGDANA_DNA}
+
+Ты придумываешь 10 коротких виральных идей для ${product.name} (${spec.article}) в стиле пластилинового stop-motion.
+Держи в голове продуктовую боль: ${product.pain}.
+Каждая идея должна быть абсурдной, но понятной, с сильным визуальным хуком первой секунды и без лишних персонажей.
+Верни строгий JSON-массив из 10 объектов вида:
+[{ "title": "<короткое название идеи, до 6 слов>", "hook": "<абсурдный визуальный хук>" }]`
+}
 
 // ── NanoBanana (img-to-img) ──────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import type { GenerationConfig } from '@google/generative-ai'
-import { BOGDANA_SCENARIO_SYSTEM_PROMPT, getBogdanaProduct, type BogdanaProductId } from './bogdana'
+import { getBogdanaIdeaSystemPrompt, getBogdanaMasterPrompt, getBogdanaProduct, type BogdanaProductId } from './bogdana'
 
 export type LogFn = (message: string, level?: 'info' | 'success' | 'error') => void
 
@@ -54,7 +54,7 @@ export async function generateBogdanaIdeas(
   const product = getBogdanaProduct(productId)
   onLog?.(`Gemini: генерирую ${count} виральных идей для «${product.name}»...`)
 
-  const model = getModel(geminiKey, BOGDANA_SCENARIO_SYSTEM_PROMPT)
+  const model = getModel(geminiKey, getBogdanaIdeaSystemPrompt(productId))
 
   const userPrompt = `Продукт: ${product.name} — ${product.pain} (артикул ${product.article}).
 Придумай ровно ${count} КОРОТКИХ виральных идей для пластилиновых роликов Богданы про этот продукт.
@@ -93,6 +93,10 @@ export interface BogdanaScenario {
   productId: BogdanaProductId
   ideaTitle: string
   scenes: BogdanaScene[]
+  onScreenText?: string[]
+  nanobananaPrompts?: string[]
+  klingAnimation?: string[]
+  klingAudio?: string[]
 }
 
 /**
@@ -108,7 +112,7 @@ export async function generateBogdanaScenario(
   const product = getBogdanaProduct(productId)
   onLog?.(`Gemini: расписываю сценарий по идее «${idea.title}»...`)
 
-  const model = getModel(geminiKey, BOGDANA_SCENARIO_SYSTEM_PROMPT)
+  const model = getModel(geminiKey, getBogdanaMasterPrompt(productId))
 
   const userPrompt = `Продукт: ${product.name} — ${product.pain} (артикул ${product.article}).
 Выбранная идея: "${idea.title}" — ${idea.hook}.
@@ -117,8 +121,21 @@ export async function generateBogdanaScenario(
 2) Появление Коржика (корги-спасатель),
 3) Магическое исцеление витамином ${product.name},
 4) Счастливый финал.
-ВАЖНО про сцену 1 (Хук): её кадр НАЧАЛА (startImagePrompt) — это обычная, нормальная, спокойная Богдана в её привычном интерьере, без искажений (стабильный опорный кадр). Кадр КОНЦА (endImagePrompt) — момент, когда происходит абсурдное событие / визуальная метафора боли.
-У КАЖДОЙ сцены задай два визуальных промпта: startImagePrompt (кадр начала) и endImagePrompt (кадр конца) — между ними будет анимация. Поле action описывает движение от начала к концу.
+ВАЖНО: строгая JSON-структура должна включать:
+{
+  "on_screen_text": ["<3-4 короткие фразы для титров>"],
+  "nanobanana_prompts": ["<8 строк: start/end для 4 сцен с @image тегами>"],
+  "kling_animation": ["<4 строки: motion prompts, each with Static camera>"],
+  "kling_audio": ["<4 строки: each <= 200 chars>"],
+  "ideaTitle": "${idea.title}",
+  "scenes": [
+    { "scene": 1, "title": "Хук", "action": "<движение от start к end>", "subtitle": "<титр на экране>", "startImagePrompt": "<обычная нормальная Богдана в одной локации>", "endImagePrompt": "<абсурдная метафора боли>" },
+    { "scene": 2, "title": "Появление Коржика", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." },
+    { "scene": 3, "title": "Исцеление", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." },
+    { "scene": 4, "title": "Финал", "action": "...", "subtitle": "...", "startImagePrompt": "...", "endImagePrompt": "..." }
+  ]
+}
+В сценах изображения должны соответствовать единой локации; для Хлорофилла обязательно присутствует прозрачный стакан с ярко-зелёной водой в сцене спасения Коржиком.
 Богдана не говорит ртом — её мысли идут в титрах.
 Верни строгий JSON вида:
 {
@@ -133,7 +150,14 @@ export async function generateBogdanaScenario(
 
   const result = await model.generateContent(userPrompt)
   const text = result.response.text()
-  const parsed = parseJson<{ ideaTitle?: string; scenes: BogdanaScene[] }>(text)
+  const parsed = parseJson<{
+    ideaTitle?: string
+    scenes: BogdanaScene[]
+    on_screen_text?: string[]
+    nanobanana_prompts?: string[]
+    kling_animation?: string[]
+    kling_audio?: string[]
+  }>(text)
 
   if (!parsed.scenes || parsed.scenes.length === 0) {
     throw new Error('Gemini не вернул сцены сценария')
@@ -144,5 +168,9 @@ export async function generateBogdanaScenario(
     productId,
     ideaTitle: parsed.ideaTitle ?? idea.title,
     scenes: parsed.scenes,
+    onScreenText: parsed.on_screen_text,
+    nanobananaPrompts: parsed.nanobanana_prompts,
+    klingAnimation: parsed.kling_animation,
+    klingAudio: parsed.kling_audio,
   }
 }
