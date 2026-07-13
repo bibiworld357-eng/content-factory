@@ -65,6 +65,7 @@ export function UniqueizerPanel() {
     const p = (async () => {
       const base = `${window.location.origin}/ffmpeg`
       const wasmResp = await fetch(`${base}/ffmpeg-core.wasm`)
+      if (!wasmResp.ok) throw new Error(`Не удалось загрузить ffmpeg-core.wasm (${wasmResp.status})`)
       const wasmBlobUrl = URL.createObjectURL(await wasmResp.blob())
       const { FFmpeg } = await import('@ffmpeg/ffmpeg')
       const ffmpeg = new FFmpeg()
@@ -74,7 +75,9 @@ export function UniqueizerPanel() {
       ffmpeg.on('progress', ({ progress: pg }: { progress: number }) => {
         setProgress((prev) => Math.max(prev, Math.min(99, Math.round(pg * 100))))
       })
-      await ffmpeg.load({ coreURL: `${base}/ffmpeg-core.js`, wasmURL: wasmBlobUrl })
+      // The FFmpeg worker is a module worker, so it must import the ESM core
+      // (the UMD build has no `export default` and fails in a module worker).
+      await ffmpeg.load({ coreURL: `${base}/ffmpeg-core.esm.js`, wasmURL: wasmBlobUrl })
       URL.revokeObjectURL(wasmBlobUrl)
       ffmpegRef.current = ffmpeg
     })()
@@ -88,7 +91,6 @@ export function UniqueizerPanel() {
 
   const pickFile = (f: File | null) => {
     if (!f) return
-    // Revoke previous result URLs.
     setResults((prev) => {
       prev.forEach((r) => r.url && URL.revokeObjectURL(r.url))
       return []
@@ -98,6 +100,125 @@ export function UniqueizerPanel() {
     addLog(`Выбран файл: ${f.name} (${(f.size / 1024 / 1024).toFixed(1)} МБ)`)
   }
 
+  /** Prefer native FFmpeg exposed by the dev server (faster, full codec set). */
+  async function isNativeAvailable(): Promise<boolean> {
+    if (new URLSearchParams(window.location.search).has('wasm')) return false
+    try {
+      const r = await fetch('/api/ffmpeg/check')
+      if (!r.ok) return false
+      const { available } = (await r.json()) as { available: boolean }
+      return !!available
+    } catch {
+      return false
+    }
+  }
+
+  async function runNative(file: File, dims: { width: number; height: number }, n: number) {
+    addLog('Использую системный FFmpeg (dev-сервер).')
+    const inputName = 'uniq_src.mp4'
+    const buf = await file.arrayBuffer()
+    const wr = await fetch(`/api/ffmpeg/write?name=${inputName}`, { method: 'POST', body: buf })
+    if (!wr.ok) throw new Error('Не удалось передать файл на обработку')
+
+    // Probe audio via a no-output exec (non-zero exit, logs carry stream info).
+    let hasAudio = true
+    try {
+      const probe = await fetch('/api/ffmpeg/exec', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args: ['-i', inputName] }),
+      })
+      const pd = (await probe.json()) as { logs?: string[] }
+      hasAudio = (pd.logs ?? []).some((l) => /Stream.*Audio/i.test(l))
+    } catch {
+      hasAudio = true
+    }
+    addLog(hasAudio ? 'Аудиодорожка найдена.' : 'Аудиодорожка не найдена.')
+
+    const rng = mulberry32((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0)
+    const produced: string[] = [inputName]
+    for (let i = 0; i < n; i++) {
+      setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'processing' } : r)))
+      const outName = `uniq_out_${i + 1}.mp4`
+      const plan = buildVariantPlan(rng, dims.width, dims.height, { watermark })
+      const args = buildFfmpegArgs(inputName, outName, plan, hasAudio)
+      addLog(`Копия ${i + 1}/${n}: ffmpeg ${args.join(' ')}`)
+      try {
+        const execRes = await fetch('/api/ffmpeg/exec', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ args }),
+        })
+        const execData = (await execRes.json()) as { exitCode: number; logs: string[]; error?: string }
+        if (execData.error) throw new Error(execData.error)
+        if (execData.exitCode !== 0) throw new Error(`FFmpeg exit ${execData.exitCode}:\n${(execData.logs ?? []).slice(-4).join('\n')}`)
+        produced.push(outName)
+        const readRes = await fetch(`/api/ffmpeg/read?name=${outName}`)
+        if (!readRes.ok) throw new Error('Не удалось прочитать результат')
+        const url = URL.createObjectURL(await readRes.blob())
+        setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'success', url } : r)))
+        addLog(`Копия ${i + 1} готова.`, 'success')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'error', error: msg } : r)))
+        addLog(`Копия ${i + 1}: ошибка — ${msg}`, 'error')
+      }
+      setProgress(Math.round(((i + 1) / n) * 100))
+    }
+    fetch('/api/ffmpeg/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: produced }),
+    }).catch(() => {})
+  }
+
+  async function runWasm(file: File, dims: { width: number; height: number }, n: number) {
+    addLog('Загружаю FFmpeg (WASM)…')
+    await loadFfmpeg()
+    const ffmpeg = ffmpegRef.current
+    if (!ffmpeg) throw new Error('FFmpeg не загрузился')
+
+    const { fetchFile } = await import('@ffmpeg/util')
+    const inputName = `src_${Date.now()}.${(file.name.split('.').pop() || 'mp4').toLowerCase()}`
+    await ffmpeg.writeFile(inputName, await fetchFile(file))
+
+    let hasAudio = true
+    try {
+      const probeLog: string[] = []
+      const off = (e: { message: string }) => probeLog.push(e.message)
+      ffmpeg.on('log', off)
+      await ffmpeg.exec(['-hide_banner', '-i', inputName]).catch(() => {})
+      ffmpeg.off('log', off)
+      hasAudio = probeLog.some((l) => /Stream.*Audio/i.test(l))
+    } catch {
+      hasAudio = true
+    }
+    addLog(hasAudio ? 'Аудиодорожка найдена.' : 'Аудиодорожка не найдена.')
+
+    const rng = mulberry32((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0)
+    for (let i = 0; i < n; i++) {
+      setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'processing' } : r)))
+      const outName = `out_${i + 1}_${Date.now()}.mp4`
+      const plan = buildVariantPlan(rng, dims.width, dims.height, { watermark })
+      const args = buildFfmpegArgs(inputName, outName, plan, hasAudio)
+      addLog(`Копия ${i + 1}/${n}: ffmpeg ${args.join(' ')}`)
+      try {
+        await ffmpeg.exec(args)
+        const data = (await ffmpeg.readFile(outName)) as Uint8Array
+        const url = URL.createObjectURL(new Blob([data], { type: 'video/mp4' }))
+        await ffmpeg.deleteFile(outName).catch(() => {})
+        setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'success', url } : r)))
+        addLog(`Копия ${i + 1} готова.`, 'success')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'error', error: msg } : r)))
+        addLog(`Копия ${i + 1}: ошибка — ${msg}`, 'error')
+      }
+      setProgress(Math.round(((i + 1) / n) * 100))
+    }
+    await ffmpeg.deleteFile(inputName).catch(() => {})
+  }
+
   const handleStart = async () => {
     if (!file || processing) return
     setProcessing(true)
@@ -105,66 +226,20 @@ export function UniqueizerPanel() {
     const dims = await getVideoSize(file)
     addLog(`Разрешение источника: ${dims.width}×${dims.height}`)
 
-    try {
-      addLog('Загружаю FFmpeg (WASM)…')
-      await loadFfmpeg()
-      const ffmpeg = ffmpegRef.current
-      if (!ffmpeg) throw new Error('FFmpeg не загрузился')
-
-      const { fetchFile } = await import('@ffmpeg/util')
-      const inputName = `src_${Date.now()}.${(file.name.split('.').pop() || 'mp4').toLowerCase()}`
-      await ffmpeg.writeFile(inputName, await fetchFile(file))
-
-      // Probe for an audio stream (ffmpeg prints stream info to the log).
-      let hasAudio = true
-      try {
-        const probeLog: string[] = []
-        const off = (e: { message: string }) => probeLog.push(e.message)
-        ffmpeg.on('log', off)
-        await ffmpeg.exec(['-hide_banner', '-i', inputName]).catch(() => {})
-        ffmpeg.off('log', off)
-        hasAudio = probeLog.some((l) => /Stream.*Audio/i.test(l))
-      } catch {
-        hasAudio = true
-      }
-      addLog(hasAudio ? 'Аудиодорожка найдена — применяю аудио-фильтры.' : 'Аудиодорожка не найдена.')
-
-      const initial: VariantResult[] = Array.from({ length: count }, (_, i) => ({
+    setResults(
+      Array.from({ length: count }, (_, i) => ({
         index: i + 1,
         name: buildVariantName(file.name, i + 1),
-        status: 'pending',
+        status: 'pending' as const,
       }))
-      setResults(initial)
+    )
 
-      // random.seed(time.time()) analogue — a fresh seed per run.
-      const rng = mulberry32((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0)
-
-      for (let i = 0; i < count; i++) {
-        setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'processing' } : r)))
-        const outName = `out_${i + 1}_${Date.now()}.mp4`
-        const plan = buildVariantPlan(rng, dims.width, dims.height, { watermark })
-        const args = buildFfmpegArgs(inputName, outName, plan, hasAudio)
-        addLog(`Копия ${i + 1}/${count}: ffmpeg ${args.join(' ')}`)
-        try {
-          await ffmpeg.exec(args)
-          const data = (await ffmpeg.readFile(outName)) as Uint8Array
-          const blob = new Blob([data], { type: 'video/mp4' })
-          const url = URL.createObjectURL(blob)
-          await ffmpeg.deleteFile(outName).catch(() => {})
-          setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'success', url } : r)))
-          addLog(`Копия ${i + 1} готова.`, 'success')
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : 'ошибка FFmpeg'
-          setResults((prev) => prev.map((r) => (r.index === i + 1 ? { ...r, status: 'error', error: msg } : r)))
-          addLog(`Копия ${i + 1}: ошибка — ${msg}`, 'error')
-        }
-        setProgress(Math.round(((i + 1) / count) * 100))
-      }
-
-      await ffmpeg.deleteFile(inputName).catch(() => {})
+    try {
+      if (await isNativeAvailable()) await runNative(file, dims, count)
+      else await runWasm(file, dims, count)
       addLog('Обработка завершена.', 'success')
     } catch (err) {
-      addLog(err instanceof Error ? err.message : 'Непредвиденная ошибка', 'error')
+      addLog(err instanceof Error ? err.message : String(err), 'error')
     } finally {
       setProcessing(false)
       setProgress(100)
@@ -195,7 +270,7 @@ export function UniqueizerPanel() {
       <p className="text-sm text-muted-foreground">
         Создаёт 1–10 уникальных копий видео: к каждой копии применяется случайный набор из ≥4 фильтров FFmpeg
         (кроп+масштаб, микро-поворот, цветокоррекция, шум, микро-изменение скорости), плюс рандомные GOP/CRF/профиль
-        x264 и удаление метаданных. Обработка идёт в браузере (FFmpeg-WASM); результаты скачиваются файлами.
+        x264 и удаление метаданных. Всё одной командой; результаты скачиваются файлами.
       </p>
 
       {/* File picker */}
