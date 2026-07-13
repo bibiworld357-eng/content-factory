@@ -1,6 +1,7 @@
 import type { LogLevel, MinimaxTTSResult } from '@/types'
 import {
   KLING_AUDIO_MAX_CHARS,
+  BOGDANA_VIDEO_DNA,
   clampKlingAudioPrompts,
   getBogdanaProduct,
   withStaticCamera,
@@ -758,7 +759,7 @@ export async function submitKlingVideoTask(
 
   const payload: Record<string, unknown> = {
     image: imageUrl,
-    prompt: motionPrompt,
+    prompt: `${BOGDANA_VIDEO_DNA}\n\n${motionPrompt}`,
     duration,
     aspect_ratio: aspectRatio,
     cfg_scale: cfgScale,

@@ -50,6 +50,9 @@ export const BOGDANA_DNA = `CHARACTER DNA — BOGDANA:
 - She NEVER speaks with her mouth — her thoughts are shown as on-screen subtitles/captions.
 - Native products: Magnesium (#WW405041), Inositol (#WW405049), Chlorophyll (#WW405040).`
 
+/** Compact visual identity prepended to Kling image-to-video prompts. */
+export const BOGDANA_VIDEO_DNA = `Bogdana — a 22-year-old woman rendered in 3D claymation / plasticine stop-motion: highly textured plasticine with visible fingerprints, one white wireless earbud in her ear, "clean girl" aesthetic. Keep her exact appearance, clothing, hair, materials and colors from the input frame. Her corgi "Korzhik" is plasticine too. Preserve the claymation look; no realistic human skin.`
+
 interface BogdanaMasterPromptSpec {
   title: string
   article: string
