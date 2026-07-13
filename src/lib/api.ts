@@ -713,7 +713,7 @@ export interface KlingModel {
 }
 
 export const KLING_MODELS: KlingModel[] = [
-  { id: 'kling-v3.0-pro', label: 'Kling 3.0 Pro', endpoint: 'v3/kwaivgi/kling-v3.0-pro/image-to-video', durations: [5, 10] },
+  { id: 'kling-v3.0-pro', label: 'Kling 3.0 Pro', endpoint: 'v3/kwaivgi/kling-v3.0-pro/image-to-video', durations: [3, 5, 10] },
   { id: 'kling-v2.5-turbo-pro', label: 'Kling 2.5 Turbo Pro', endpoint: 'v3/kwaivgi/kling-v2.5-turbo-pro/image-to-video', durations: [5, 10] },
   { id: 'kling-v2.1-master', label: 'Kling 2.1 Master', endpoint: 'v3/kwaivgi/kling-v2.1-master/image-to-video', durations: [5, 10] },
   { id: 'kling-v2.1-pro', label: 'Kling 2.1 Pro', endpoint: 'v3/kwaivgi/kling-v2.1-pro/image-to-video', durations: [5, 10] },
