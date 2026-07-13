@@ -40,6 +40,8 @@ import {
   pollKlingResult,
   generateKlingAudioSequence,
   generateBogdanaThreadsPosts,
+  KLING_MODELS,
+  DEFAULT_KLING_MODEL,
   type BogdanaImageModel,
   type BogdanaThreadsPost,
 } from '@/lib/api'
@@ -193,6 +195,9 @@ export function BogdanaPipelinePanel() {
   const [loadingAudio, setLoadingAudio] = useState(false)
   const [videoDescription, setVideoDescription] = useState<string | null>(null)
   const [loadingDescription, setLoadingDescription] = useState(false)
+  const [klingModelId, setKlingModelId] = useState(DEFAULT_KLING_MODEL.id)
+  const klingModel = KLING_MODELS.find((m) => m.id === klingModelId) ?? DEFAULT_KLING_MODEL
+  const [klingDuration, setKlingDuration] = useState(DEFAULT_KLING_MODEL.durations[0])
 
   // Scenes whose start frame is ready — each is one animatable job (pair or single).
   const videoCandidates = sceneFrames
@@ -359,7 +364,7 @@ export function BogdanaPipelinePanel() {
             apiKeys.wavespeed,
             job.startUrl,
             motion,
-            { duration: 5, aspectRatio: '9:16', endImage },
+            { duration: klingDuration, aspectRatio: '9:16', endImage, modelEndpoint: klingModel.endpoint },
             addLog
           )
           const result = await pollKlingResult(apiKeys.wavespeed, requestId, addLog)
@@ -606,6 +611,52 @@ export function BogdanaPipelinePanel() {
           <p className="text-[11px] text-muted-foreground">
             Выберите, какие кадры отправить в Kling: пара (Start→End) или один кадр (Start). Тег «Static camera» добавляется автоматически.
           </p>
+
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">Модель Kling</p>
+              <div className="flex flex-wrap gap-2">
+                {KLING_MODELS.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      setKlingModelId(m.id)
+                      if (!m.durations.includes(klingDuration)) setKlingDuration(m.durations[0])
+                    }}
+                    disabled={loadingVideo}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50',
+                      klingModelId === m.id
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground">Длительность</p>
+              <div className="flex gap-2">
+                {klingModel.durations.map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setKlingDuration(d)}
+                    disabled={loadingVideo}
+                    className={cn(
+                      'px-3 py-1.5 rounded-lg border text-sm transition-colors disabled:opacity-50',
+                      klingDuration === d
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border hover:border-primary/50'
+                    )}
+                  >
+                    {d}s
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
 
           {videoCandidates.length === 0 ? (
             <p className="text-[11px] text-muted-foreground">Сначала сгенерируйте кадры на шаге 2.</p>

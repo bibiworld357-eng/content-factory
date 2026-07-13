@@ -703,13 +703,33 @@ export async function generateVideoPromptsWithGrok(
   return results
 }
 
+/** Selectable Kling image-to-video models on Wavespeed and their allowed durations. */
+export interface KlingModel {
+  id: string
+  label: string
+  /** Wavespeed path after `/api/`, e.g. `v3/kwaivgi/kling-v3.0-pro/image-to-video`. */
+  endpoint: string
+  durations: number[]
+}
+
+export const KLING_MODELS: KlingModel[] = [
+  { id: 'kling-v3.0-pro', label: 'Kling 3.0 Pro', endpoint: 'v3/kwaivgi/kling-v3.0-pro/image-to-video', durations: [5, 10] },
+  { id: 'kling-v2.5-turbo-pro', label: 'Kling 2.5 Turbo Pro', endpoint: 'v3/kwaivgi/kling-v2.5-turbo-pro/image-to-video', durations: [5, 10] },
+  { id: 'kling-v2.1-master', label: 'Kling 2.1 Master', endpoint: 'v3/kwaivgi/kling-v2.1-master/image-to-video', durations: [5, 10] },
+  { id: 'kling-v2.1-pro', label: 'Kling 2.1 Pro', endpoint: 'v3/kwaivgi/kling-v2.1-pro/image-to-video', durations: [5, 10] },
+]
+
+export const DEFAULT_KLING_MODEL = KLING_MODELS[0]
+
 export interface KlingOptions {
-  duration: 3 | 5 | 10 | 15
+  duration: number
   aspectRatio?: string
   withSound?: boolean
   cfgScale?: number
   negativePrompt?: string
   endImage?: string
+  /** Wavespeed endpoint path; defaults to the current Kling 3.0 Pro model. */
+  modelEndpoint?: string
 }
 
 export interface KlingTaskResponse {
@@ -731,9 +751,10 @@ export async function submitKlingVideoTask(
   onLog?: LogFn
 ): Promise<KlingTaskResponse> {
   const { duration, aspectRatio = '9:16', withSound = false, cfgScale = 0.5, negativePrompt, endImage } = options
+  const modelEndpoint = options.modelEndpoint ?? DEFAULT_KLING_MODEL.endpoint
 
   const hasEndFrame = endImage && endImage.trim().length > 0
-  onLog?.(`Отправка задачи в Kling [${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
+  onLog?.(`Отправка задачи в Kling [${modelEndpoint.split('/')[2] ?? 'kling'}, ${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
   onLog?.(`✨ IceShelf Element (${ICESHELF_ELEMENT_ID}) применен для консистентности персонажа`, 'success')
 
   // Always inject the "Static camera" tag to prevent background flicker.
@@ -757,7 +778,7 @@ export async function submitKlingVideoTask(
     payload.end_image = endImage
   }
 
-  console.log('[Kling Submit] → POST /api/v3/kwaivgi/kling-v3.0-pro/image-to-video', {
+  console.log(`[Kling Submit] → POST /api/${modelEndpoint}`, {
     duration,
     aspectRatio,
     withSound,
@@ -765,8 +786,8 @@ export async function submitKlingVideoTask(
   })
 
   const apiUrl = import.meta.env.DEV
-    ? '/api/wavespeed/v3/kwaivgi/kling-v3.0-pro/image-to-video'
-    : 'https://api.wavespeed.ai/api/v3/kwaivgi/kling-v3.0-pro/image-to-video'
+    ? `/api/wavespeed/${modelEndpoint}`
+    : `https://api.wavespeed.ai/api/${modelEndpoint}`
 
   const httpResponse = await fetch(apiUrl, {
     method: 'POST',
