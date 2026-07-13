@@ -98,7 +98,7 @@ interface ContentStore {
   selectedModelsForBatch: string[]
   showModelSelector: boolean
   batchFrameCount: number
-  activeTab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale'
+  activeTab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer'
   voiceResult: MinimaxTTSResult | null
   pendingVoiceText: string | null
   newsResearch: NewsResearchState | null
@@ -139,7 +139,7 @@ interface ContentStore {
   setSelectedModelsForBatch: (models: string[]) => void
   setShowModelSelector: (show: boolean) => void
   setBatchFrameCount: (count: number) => void
-  setActiveTab: (tab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale') => void
+  setActiveTab: (tab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer') => void
   setVoiceResult: (result: MinimaxTTSResult | null) => void
   setPendingVoiceText: (text: string | null) => void
   setNewsResearch: (result: NewsResearchState | null) => void
