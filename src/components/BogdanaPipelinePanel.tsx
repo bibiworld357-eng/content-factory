@@ -21,7 +21,6 @@ import { useContentStore } from '@/store/useContentStore'
 import {
   BOGDANA_PRODUCTS,
   NANOBANANA_STYLE_SUFFIX,
-  buildKlingFramePairs,
   buildNanoBananaPrompt,
   getBogdanaProduct,
   type BogdanaProductId,
@@ -30,6 +29,7 @@ import {
 import {
   generateBogdanaIdeas,
   generateBogdanaScenario,
+  generateBogdanaVideoDescription,
   type BogdanaIdea,
   type BogdanaScenario,
 } from '@/lib/gemini'
@@ -71,8 +71,18 @@ interface SceneFrames {
 
 const isSceneBusy = (sf: SceneFrames) => sf.start.status === 'loading' || sf.end.status === 'loading'
 
-interface VideoPairResult {
-  pairIndex: number
+type VideoMode = 'pair' | 'single'
+
+/** User choice per scene: include it in generation and pair vs single-frame. */
+interface VideoJobOpt {
+  selected: boolean
+  mode: VideoMode
+}
+
+interface VideoJobResult {
+  scene: number
+  title: string
+  mode: VideoMode
   status: 'pending' | 'loading' | 'success' | 'error'
   videoUrl?: string
   error?: string
@@ -175,10 +185,37 @@ export function BogdanaPipelinePanel() {
   }, [sceneFrames])
 
   // Stage 3.3 — video + audio
-  const [videoPairs, setVideoPairs] = useState<VideoPairResult[]>([])
+  const [videoResults, setVideoResults] = useState<VideoJobResult[]>([])
+  // Per-scene: whether it is selected for generation and pair vs single-frame mode.
+  const [videoOpts, setVideoOpts] = useState<Record<number, VideoJobOpt>>({})
   const [loadingVideo, setLoadingVideo] = useState(false)
   const [audioPrompts, setAudioPrompts] = useState<string[]>([])
   const [loadingAudio, setLoadingAudio] = useState(false)
+  const [videoDescription, setVideoDescription] = useState<string | null>(null)
+  const [loadingDescription, setLoadingDescription] = useState(false)
+
+  // Scenes whose start frame is ready — each is one animatable job (pair or single).
+  const videoCandidates = sceneFrames
+    .filter((sf) => sf.start.status === 'success' && sf.start.imageUrl)
+    .map((sf) => ({
+      scene: sf.scene,
+      title: sf.title,
+      startUrl: sf.start.imageUrl!,
+      endUrl: sf.end.imageUrl,
+      endReady: sf.end.status === 'success' && !!sf.end.imageUrl,
+    }))
+
+  type VideoCandidate = (typeof videoCandidates)[number]
+  const getVideoOpt = (c: VideoCandidate): VideoJobOpt => {
+    const stored = videoOpts[c.scene]
+    const mode: VideoMode = c.endReady ? stored?.mode ?? 'pair' : 'single'
+    return { selected: stored?.selected ?? true, mode }
+  }
+  const setVideoOpt = (scene: number, patch: Partial<VideoJobOpt>) =>
+    setVideoOpts((prev) => ({
+      ...prev,
+      [scene]: { selected: prev[scene]?.selected ?? true, mode: prev[scene]?.mode ?? 'pair', ...patch },
+    }))
 
   // Stage 3.4 — threads
   const [threads, setThreads] = useState<BogdanaThreadsPost[]>([])
@@ -302,33 +339,33 @@ export function BogdanaPipelinePanel() {
   }
 
   async function handleGenerateVideos() {
-    // Flatten to an ordered list [s1.start, s1.end, s2.start, s2.end, ...] so
-    // Kling pairs each scene's start+end frame (1→2, 3→4, 5→6, 7→8).
-    const ordered = sceneFrames.flatMap((sf) => [sf.start, sf.end])
-    const ready = ordered.filter((f) => f.status === 'success' && f.imageUrl) as { imageUrl?: string }[]
-    const pairs = buildKlingFramePairs(ready)
-    if (pairs.length === 0) {
-      addLog('Нужно минимум 2 готовых кадра для пары Start→End', 'error')
+    const jobs = videoCandidates
+      .map((c) => ({ ...c, opt: getVideoOpt(c) }))
+      .filter((c) => c.opt.selected)
+    if (jobs.length === 0) {
+      addLog('Выберите хотя бы один кадр/пару для анимации', 'error')
       return
     }
     setLoadingVideo(true)
-    setVideoPairs(pairs.map((p) => ({ pairIndex: p.pairIndex, status: 'loading' })))
+    setVideoResults(jobs.map((j) => ({ scene: j.scene, title: j.title, mode: j.opt.mode, status: 'loading' })))
 
     await Promise.all(
-      pairs.map(async (pair, idx) => {
+      jobs.map(async (job) => {
         try {
-          const motion = scenario?.scenes[idx]?.action ?? 'Subtle claymation motion'
+          const motion = scenario?.scenes[job.scene - 1]?.action ?? 'Subtle claymation motion'
+          // Pair mode animates start→end; single mode uses only the start frame.
+          const endImage = job.opt.mode === 'pair' ? job.endUrl : undefined
           const { requestId } = await submitKlingVideoTask(
             apiKeys.wavespeed,
-            pair.start.imageUrl!,
+            job.startUrl,
             motion,
-            { duration: 5, aspectRatio: '9:16', endImage: pair.end.imageUrl },
+            { duration: 5, aspectRatio: '9:16', endImage },
             addLog
           )
           const result = await pollKlingResult(apiKeys.wavespeed, requestId, addLog)
-          setVideoPairs((prev) =>
+          setVideoResults((prev) =>
             prev.map((v) =>
-              v.pairIndex === pair.pairIndex
+              v.scene === job.scene
                 ? {
                     ...v,
                     status: result.status === 'completed' ? 'success' : 'error',
@@ -339,9 +376,9 @@ export function BogdanaPipelinePanel() {
             )
           )
         } catch (err) {
-          setVideoPairs((prev) =>
+          setVideoResults((prev) =>
             prev.map((v) =>
-              v.pairIndex === pair.pairIndex
+              v.scene === job.scene
                 ? { ...v, status: 'error', error: err instanceof Error ? err.message : 'ошибка' }
                 : v
             )
@@ -350,6 +387,19 @@ export function BogdanaPipelinePanel() {
       })
     )
     setLoadingVideo(false)
+  }
+
+  async function handleGenerateDescription() {
+    if (!scenario) return
+    setLoadingDescription(true)
+    try {
+      const desc = await generateBogdanaVideoDescription(apiKeys.gemini, scenario, addLog)
+      setVideoDescription(desc)
+    } catch (err) {
+      addLog(`Описание: ${err instanceof Error ? err.message : 'ошибка'}`, 'error')
+    } finally {
+      setLoadingDescription(false)
+    }
   }
 
   async function handleGenerateAudio() {
@@ -554,23 +604,90 @@ export function BogdanaPipelinePanel() {
         <StageHeader icon={Film} step="3" title="Видео и звук (Kling)" />
         <CardContent className="space-y-4">
           <p className="text-[11px] text-muted-foreground">
-            Пары кадров 1→2, 3→4, 5→6, 7→8 (Start + End). Тег «Static camera» добавляется автоматически.
+            Выберите, какие кадры отправить в Kling: пара (Start→End) или один кадр (Start). Тег «Static camera» добавляется автоматически.
           </p>
+
+          {videoCandidates.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">Сначала сгенерируйте кадры на шаге 2.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {videoCandidates.map((c) => {
+                const opt = getVideoOpt(c)
+                return (
+                  <div key={c.scene} className="flex items-center gap-3 rounded-lg border border-border px-2.5 py-2 text-xs">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={opt.selected}
+                        disabled={loadingVideo}
+                        onChange={(e) => setVideoOpt(c.scene, { selected: e.target.checked })}
+                      />
+                      <span className="text-primary font-medium">Сцена {c.scene}</span>
+                      <span className="text-muted-foreground">{c.title}</span>
+                    </label>
+                    <div className="ml-auto flex gap-1">
+                      {(['pair', 'single'] as const).map((m) => {
+                        const disabled = loadingVideo || (m === 'pair' && !c.endReady)
+                        return (
+                          <button
+                            key={m}
+                            onClick={() => setVideoOpt(c.scene, { mode: m })}
+                            disabled={disabled}
+                            title={m === 'pair' && !c.endReady ? 'Нет готового End-кадра' : undefined}
+                            className={cn(
+                              'px-2 py-0.5 rounded border text-[10px] transition-colors disabled:opacity-40',
+                              opt.mode === m
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border hover:border-primary/50'
+                            )}
+                          >
+                            {m === 'pair' ? 'пара Start→End' : 'один кадр'}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2">
-            <Button onClick={handleGenerateVideos} disabled={loadingVideo} size="sm">
+            <Button onClick={handleGenerateVideos} disabled={loadingVideo || videoCandidates.length === 0} size="sm">
               {loadingVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />}
-              Анимировать пары кадров
+              Анимировать выбранное
             </Button>
             <Button onClick={handleGenerateAudio} disabled={!scenario || loadingAudio} size="sm" variant="secondary">
               {loadingAudio ? <Loader2 className="h-4 w-4 animate-spin" /> : <Volume2 className="h-4 w-4" />}
               Промпты звука (≤200 симв.)
             </Button>
+            <Button onClick={handleGenerateDescription} disabled={!scenario || loadingDescription} size="sm" variant="secondary">
+              {loadingDescription ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageSquare className="h-4 w-4" />}
+              Описание для видео (Gemini)
+            </Button>
           </div>
-          {videoPairs.length > 0 && (
+
+          {videoDescription && (
+            <div className="rounded-lg border border-border bg-card/50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Описание видео (Gemini)</span>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(videoDescription)}
+                  className="text-[11px] text-primary hover:underline"
+                >
+                  копировать
+                </button>
+              </div>
+              <p className="text-sm whitespace-pre-wrap">{videoDescription}</p>
+            </div>
+          )}
+
+          {videoResults.length > 0 && (
             <div className="space-y-1.5">
-              {videoPairs.map((v) => (
-                <div key={v.pairIndex} className="flex items-center gap-2 text-xs">
-                  <span className="font-mono">Пара {v.pairIndex}</span>
+              {videoResults.map((v) => (
+                <div key={v.scene} className="flex items-center gap-2 text-xs">
+                  <span className="font-mono">Сцена {v.scene}</span>
+                  <span className="text-[10px] text-muted-foreground">{v.mode === 'pair' ? 'пара' : 'один кадр'}</span>
                   {v.status === 'loading' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                   {v.status === 'success' && v.videoUrl && (
                     <a href={v.videoUrl} target="_blank" rel="noreferrer" className="text-primary underline">

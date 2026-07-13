@@ -174,3 +174,41 @@ export async function generateBogdanaScenario(
     klingAudio: parsed.kling_audio,
   }
 }
+
+/**
+ * Generate a ready-to-post caption/description for the finished reel,
+ * based on the scenario. Returns Russian text with a light CTA and hashtags.
+ */
+export async function generateBogdanaVideoDescription(
+  geminiKey: string,
+  scenario: BogdanaScenario,
+  onLog?: LogFn
+): Promise<string> {
+  const product = getBogdanaProduct(scenario.productId)
+  onLog?.('Gemini: пишу описание видео...')
+
+  const model = getModel(geminiKey, getBogdanaMasterPrompt(scenario.productId))
+  const scenesText = scenario.scenes
+    .map((s) => `${s.scene}. ${s.title}: ${s.action} (титр: ${s.subtitle})`)
+    .join('\n')
+
+  const userPrompt = `На основе этого сценария ролика про ${product.name} (артикул ${product.article}) напиши цепляющее описание для публикации в Reels/TikTok на русском языке.
+Сценарий:
+${scenesText}
+
+Требования:
+- живой виральный тон, без воды и канцелярита;
+- 2–4 предложения (жиза по проблеме продукта);
+- лёгкий мягкий CTA в конце;
+- 5–8 релевантных хэштегов в самом конце.
+Верни строго JSON вида: {"description": "<текст с хэштегами>"}`
+
+  const result = await model.generateContent(userPrompt)
+  const text = result.response.text()
+  const parsed = parseJson<{ description?: string }>(text)
+  const desc = parsed.description?.trim()
+  if (!desc) throw new Error('Gemini не вернул описание видео')
+
+  onLog?.('Gemini: описание видео готово', 'success')
+  return desc
+}
