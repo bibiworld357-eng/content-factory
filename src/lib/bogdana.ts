@@ -151,17 +151,18 @@ ${BOGDANA_DNA}
 - Никаких текстов на экране, субтитров, титров или озвучки. Вообще.
 - Отдаёшь ТОЛЬКО промпты для генерации (на английском), без пояснений и без русского текста.
 - Единая локация: ${spec.locationRule}
-- Glow-эффект исцеления: ${spec.glowRule.toLowerCase()}
-- Стартовый кадр: в кадре ТОЛЬКО Богдана в состоянии проблемы (БЕЗ Коржика и БЕЗ баночки).
-- Конечный кадр: Богдана (нормальная и счастливая), Коржик и баночка продукта qeep. Продукт жёстко зафиксирован. Фон строго совпадает со стартовым кадром через @image2.
+- Glow-эффект исцеления для этого продукта: ${spec.glowRule.toLowerCase()}
+- СТАРТОВЫЙ КАДР: Богдана ПОЛНОСТЬЮ нормальная (физически целая, БЕЗ деформаций, БЕЗ колючек/червей/трещин), просто уставшая или сосредоточенно работающая за столом. БЕЗ Коржика и БЕЗ баночки.
+- ВСЯ абсурдная деформация (взрыв на кубики, черви из рукавов, окаменение и т.п.) происходит ТОЛЬКО внутри видео во время перехода, а НЕ на стартовом кадре.
+- КОНЕЧНЫЙ КАДР: Богдана нормальная и счастливая, Коржик и баночка продукта qeep. Дизайн банки, цвет этикетки и логотип qeep строго копируют референс @image4. Фон строго совпадает со стартовым кадром через @image2.
 
 Верни СТРОГО JSON без какого-либо текста вне JSON:
 {
   "seedance_images": {
-    "start_frame": "English generation prompt. ONLY Bogdana in a state of the problem (NO Korzhik, NO bottle). Knit sweater, freckles, beauty mark, one earbud. Claymation style tags.",
-    "end_frame": "English generation prompt. Bogdana (calm and happy), Korzhik, and the qeep product bottle. Product is strictly fixed in this scene. Background strictly matches the start frame via @image2."
+    "start_frame": "English generation prompt for NanoBanana/GPT Image. ONLY Bogdana in a fully NORMAL physical state (NO deformations, NO Korzhik, NO bottle). She sits on a pouf/sofa in the room from @image2, looking tired or focused while working. Knit sweater, freckles, beauty mark, one earbud. Claymation style tags.",
+    "end_frame": "English generation prompt for NanoBanana/GPT Image. Bogdana (normal, happy), Korzhik and the qeep product bottle. IMPORTANT: the bottle design, label color and qeep logo must strictly and exactly copy the reference from @image4. Background strictly matches the start frame via @image2."
   },
-  "seedance_transition_prompt": "3D Claymation stop-motion. Multishot with dynamic camera cuts transitioning from @image1 to @image2. Shot 1 (Close-up): Starts on @image1 showing the problem. Shot 2: Corgi runs in holding the exact ${product.name} qeep bottle from @image2. Bottle design and qeep logo must strictly match @image2. Shot 3: Bogdana swallows the capsule, magical ${spec.glowRule.toLowerCase()} Shot 4: final happy hug from @image2. AUDIO: NO background music, NO voiceover, ONLY synchronized claymation sound effects of clay cracking, plastic rattle, pill gulp, magical chime, and happy dog barking."
+  "seedance_transition_prompt": "3D Claymation stop-motion. Multishot with dynamic camera cuts transitioning from @image1 to @image2. Shot 1 (Close-up): Starts on normal Bogdana from @image1. Suddenly, her body undergoes an absurd physical transformation [DESCRIBE A CONCRETE DEFORMATION, e.g. her sleeve splits and colorful clay worms spill out / her head turns into a Rubik's cube]. Shot 2: Corgi runs in holding the exact ${product.name} qeep bottle from @image2. Bottle design and qeep logo must strictly match @image2. Shot 3: she swallows the capsule, magical ${spec.glowRule.toLowerCase()} Shot 4: final happy hug from @image2. AUDIO: NO background music, NO voiceover, ONLY synchronized claymation sound effects of clay cracking, plastic rattle, pill gulp, magical chime, and happy dog barking."
 }`
 }
 
