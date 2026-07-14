@@ -1,13 +1,18 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import type { GenerationConfig } from '@google/generative-ai'
-import { getBogdanaIdeaSystemPrompt, getBogdanaMasterPrompt, getBogdanaProduct, type BogdanaProductId } from './bogdana'
+import {
+  getBogdanaIdeaSystemPrompt,
+  getBogdanaMasterPrompt,
+  getBogdanaSeedanceMasterPrompt,
+  getBogdanaProduct,
+  type BogdanaProductId,
+} from './bogdana'
 
 export type LogFn = (message: string, level?: 'info' | 'success' | 'error') => void
 
 // Google Gen AI SDK — parallel text-generation service (used alongside Grok).
-// Note: gemini-1.5-pro is retired on the current API. gemini-2.5-flash is used
-// because the Pro tier (gemini-2.5-pro) is not available on AI Studio free keys.
-export const GEMINI_MODEL = 'gemini-2.5-flash'
+// Default scenario model for the Bogdana pipeline.
+export const GEMINI_MODEL = 'gemini-3.5-flash'
 
 // Force the model to always return raw JSON.
 const JSON_GENERATION_CONFIG: GenerationConfig = {
@@ -15,12 +20,12 @@ const JSON_GENERATION_CONFIG: GenerationConfig = {
   temperature: 0.9,
 }
 
-function getModel(apiKey: string, systemInstruction: string) {
+function getModel(apiKey: string, systemInstruction: string, model: string = GEMINI_MODEL) {
   const key = apiKey.trim()
   if (!key) throw new Error('Gemini: API-ключ не задан (VITE_GEMINI_API_KEY)')
   const genAI = new GoogleGenerativeAI(key)
   return genAI.getGenerativeModel({
-    model: GEMINI_MODEL,
+    model,
     systemInstruction,
     generationConfig: JSON_GENERATION_CONFIG,
   })
@@ -173,6 +178,58 @@ export async function generateBogdanaScenario(
     klingAnimation: parsed.kling_animation,
     klingAudio: parsed.kling_audio,
   }
+}
+
+export interface BogdanaSeedanceScenario {
+  productId: BogdanaProductId
+  ideaTitle: string
+  /** English generation prompt for the START frame (@image1). */
+  startFrame: string
+  /** English generation prompt for the END frame (@image2). */
+  endFrame: string
+  /** Multishot Seedance transition prompt with in-video sound effects. */
+  transitionPrompt: string
+}
+
+/**
+ * Seedance 2.0 scenario: returns ONLY prompts (no on-screen text / subtitles /
+ * voiceover) — two frame prompts and a single dynamic transition prompt.
+ */
+export async function generateBogdanaSeedanceScenario(
+  geminiKey: string,
+  productId: BogdanaProductId,
+  idea: BogdanaIdea,
+  onLog?: LogFn
+): Promise<BogdanaSeedanceScenario> {
+  const product = getBogdanaProduct(productId)
+  onLog?.(`Gemini: Seedance-промпты по идее «${idea.title}»...`)
+
+  const model = getModel(geminiKey, getBogdanaSeedanceMasterPrompt(productId))
+  const userPrompt = `Продукт: ${product.name} — ${product.pain} (артикул ${product.article}).
+Выбранная идея: "${idea.title}" — ${idea.hook}.
+Верни строго JSON вида:
+{
+  "seedance_images": { "start_frame": "<English prompt>", "end_frame": "<English prompt>" },
+  "seedance_transition_prompt": "<English multishot transition prompt with AUDIO sound effects>"
+}
+Никакого текста на экране, субтитров или озвучки — только промпты.`
+
+  const result = await model.generateContent(userPrompt)
+  const text = result.response.text()
+  const parsed = parseJson<{
+    seedance_images?: { start_frame?: string; end_frame?: string }
+    seedance_transition_prompt?: string
+  }>(text)
+
+  const startFrame = parsed.seedance_images?.start_frame?.trim()
+  const endFrame = parsed.seedance_images?.end_frame?.trim()
+  const transitionPrompt = parsed.seedance_transition_prompt?.trim()
+  if (!startFrame || !endFrame || !transitionPrompt) {
+    throw new Error('Gemini не вернул полный Seedance-JSON (start_frame / end_frame / transition)')
+  }
+
+  onLog?.('Gemini: Seedance-промпты готовы', 'success')
+  return { productId, ideaTitle: idea.title, startFrame, endFrame, transitionPrompt }
 }
 
 /**

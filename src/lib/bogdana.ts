@@ -135,6 +135,36 @@ ${spec.glowRule.replace('Магическое исцеление всегда с
 - Исцеление всегда сопровождается ${spec.glowRule.toLowerCase()}`
 }
 
+/**
+ * Seedance 2.0 master prompt. The model must return ONLY generation prompts —
+ * no on-screen text, no subtitles, no voiceover. Two frames (start + end) plus
+ * a single dynamic multishot transition prompt with in-video sound effects.
+ */
+export function getBogdanaSeedanceMasterPrompt(productId: BogdanaProductId): string {
+  const product = getBogdanaProduct(productId)
+  const spec = BOGDANA_MASTER_PROMPT_SPECS[productId]
+  return `Ты — профессиональный сценарист виральных пластилиновых stop-motion роликов для продукта ${product.name} (арт. ${spec.article}).
+
+${BOGDANA_DNA}
+
+РЕЖИМ SEEDANCE 2.0 (КРИТИЧЕСКИ ВАЖНО):
+- Никаких текстов на экране, субтитров, титров или озвучки. Вообще.
+- Отдаёшь ТОЛЬКО промпты для генерации (на английском), без пояснений и без русского текста.
+- Единая локация: ${spec.locationRule}
+- Glow-эффект исцеления: ${spec.glowRule.toLowerCase()}
+- Стартовый кадр: в кадре ТОЛЬКО Богдана в состоянии проблемы (БЕЗ Коржика и БЕЗ баночки).
+- Конечный кадр: Богдана (нормальная и счастливая), Коржик и баночка продукта qeep. Продукт жёстко зафиксирован. Фон строго совпадает со стартовым кадром через @image2.
+
+Верни СТРОГО JSON без какого-либо текста вне JSON:
+{
+  "seedance_images": {
+    "start_frame": "English generation prompt. ONLY Bogdana in a state of the problem (NO Korzhik, NO bottle). Knit sweater, freckles, beauty mark, one earbud. Claymation style tags.",
+    "end_frame": "English generation prompt. Bogdana (calm and happy), Korzhik, and the qeep product bottle. Product is strictly fixed in this scene. Background strictly matches the start frame via @image2."
+  },
+  "seedance_transition_prompt": "3D Claymation stop-motion. Multishot with dynamic camera cuts transitioning from @image1 to @image2. Shot 1 (Close-up): Starts on @image1 showing the problem. Shot 2: Corgi runs in holding the exact ${product.name} qeep bottle from @image2. Bottle design and qeep logo must strictly match @image2. Shot 3: Bogdana swallows the capsule, magical ${spec.glowRule.toLowerCase()} Shot 4: final happy hug from @image2. AUDIO: NO background music, NO voiceover, ONLY synchronized claymation sound effects of clay cracking, plastic rattle, pill gulp, magical chime, and happy dog barking."
+}`
+}
+
 export function getBogdanaIdeaSystemPrompt(productId: BogdanaProductId): string {
   const product = getBogdanaProduct(productId)
   const spec = BOGDANA_MASTER_PROMPT_SPECS[productId]
@@ -166,6 +196,30 @@ export const NANOBANANA_IMAGE_TAGS = {
   korzhik: '@image3',
   product: '@image4',
 } as const
+
+/**
+ * Textual DNA descriptions used to compile @imageN reference tags into plain
+ * text for models that do NOT support reference tags (e.g. GPT Image / DALL·E 3).
+ */
+export const NANOBANANA_TAG_DESCRIPTIONS: Record<string, string> = {
+  '@image1':
+    "Bogdana — a 22-year-old woman with soft freckles, a small beauty mark, natural plasticine hair and ONE white wireless earbud, wearing a knit sweater, clean-girl aesthetic",
+  '@image2': 'the exact same environment, background, camera framing and lighting as the previous/start frame',
+  '@image3': 'Korzhik — a plasticine reddish-white corgi rescue dog',
+  '@image4': 'the qeep supplement jar (keep the exact qeep label, colors and design)',
+}
+
+/**
+ * Replace @image1..@image4 tags with their textual DNA descriptions so the
+ * prompt is self-contained for tag-less models (GPT Image / DALL·E 3).
+ */
+export function compileTagsToText(prompt: string): string {
+  let out = prompt
+  for (const [tag, desc] of Object.entries(NANOBANANA_TAG_DESCRIPTIONS)) {
+    out = out.split(tag).join(desc)
+  }
+  return out
+}
 
 export interface NanoBananaReferenceSet {
   /** @image1 — Bogdana face reference (base64 data URL). */
@@ -199,8 +253,23 @@ export interface NanoBananaPromptResult {
 export function buildNanoBananaPrompt(
   basePrompt: string,
   refs: NanoBananaReferenceSet,
-  previousFrame?: string
+  previousFrame?: string,
+  mode: 'tags' | 'text' = 'tags'
 ): NanoBananaPromptResult {
+  const referenceImages = (
+    previousFrame
+      ? [refs.face, previousFrame, refs.korzhik, refs.product, refs.scene]
+      : [refs.face, refs.scene, refs.korzhik, refs.product]
+  ).filter((img): img is string => typeof img === 'string' && img.length > 0)
+
+  // Tag-less models (GPT Image / DALL·E 3): compile @imageN tags into text.
+  if (mode === 'text') {
+    const identity =
+      'Subject: Bogdana — a 22-year-old woman with soft freckles, a small beauty mark, natural plasticine hair and ONE white wireless earbud, wearing a knit sweater, clean-girl aesthetic. '
+    const prompt = `${identity}${compileTagsToText(basePrompt.trim())}\n\n${NANOBANANA_STYLE_SUFFIX}`
+    return { prompt, referenceImages }
+  }
+
   const legendLines: string[] = []
   if (previousFrame)
     legendLines.push(
@@ -223,13 +292,6 @@ export function buildNanoBananaPrompt(
     : 'Subject: Bogdana. '
 
   const prompt = `${identity}${basePrompt.trim()}${legend}\n\n${NANOBANANA_STYLE_SUFFIX}`
-
-  // Reference images ordered to match the @imageN tags.
-  const referenceImages = (
-    previousFrame
-      ? [refs.face, previousFrame, refs.korzhik, refs.product, refs.scene]
-      : [refs.face, refs.scene, refs.korzhik, refs.product]
-  ).filter((img): img is string => typeof img === 'string' && img.length > 0)
 
   return { prompt, referenceImages }
 }

@@ -1023,6 +1023,90 @@ export async function pollKlingResult(
   return { status: 'failed', error: 'Превышено время ожидания' }
 }
 
+// ── Seedance 2.0 (first+last frame image-to-video via Wavespeed) ─────────────
+
+/**
+ * Wavespeed path (after `/api/`) for the Seedance 2.0 image-to-video model.
+ * NOTE: if Wavespeed returns 404, adjust this slug to the model available on
+ * your key (mirrors how KLING_MODELS endpoints are configured).
+ */
+export const SEEDANCE_ENDPOINT = 'v3/bytedance/seedance-v2/image-to-video'
+
+export interface SeedanceOptions {
+  /** Base64 data URL / URL of the END frame (@image2). */
+  endImage: string
+  aspectRatio?: string
+  duration?: number
+}
+
+/**
+ * Submit a Seedance 2.0 image-to-video task with a start frame (@image1),
+ * an end frame (@image2) and the transition prompt (which already contains the
+ * in-video AUDIO sound-effect instructions). Authorizes with the Wavespeed key
+ * (VITE_WAVESPEED_API_KEY). Poll the result with `pollKlingResult`.
+ */
+export async function submitSeedanceVideoTask(
+  wavespeedKey: string,
+  startImage: string,
+  prompt: string,
+  options: SeedanceOptions,
+  onLog?: LogFn
+): Promise<KlingTaskResponse> {
+  const { endImage, aspectRatio = '9:16', duration = 5 } = options
+  onLog?.(`Отправка задачи в Seedance 2.0 [${duration}s, ${aspectRatio}]...`)
+
+  const payload: Record<string, unknown> = {
+    image: startImage,
+    end_image: endImage,
+    prompt,
+    aspect_ratio: aspectRatio,
+    duration,
+  }
+
+  const apiUrl = import.meta.env.DEV
+    ? `/api/wavespeed/${SEEDANCE_ENDPOINT}`
+    : `https://api.wavespeed.ai/api/${SEEDANCE_ENDPOINT}`
+
+  const httpResponse = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!httpResponse.ok) {
+    const errorData = await httpResponse.json().catch(() => ({}))
+    const msg = `Seedance ${httpResponse.status}: ${JSON.stringify(errorData)}`
+    onLog?.(msg, 'error')
+    throw new Error(msg)
+  }
+
+  const responseData = (await httpResponse.json()) as {
+    request_id?: string
+    requestId?: string
+    id?: string
+    data?: { request_id?: string; requestId?: string; id?: string }
+  }
+
+  const requestId =
+    responseData.request_id ??
+    responseData.requestId ??
+    responseData.id ??
+    responseData.data?.request_id ??
+    responseData.data?.requestId ??
+    responseData.data?.id
+
+  if (!requestId) {
+    onLog?.(`Seedance ответ: ${JSON.stringify(responseData)}`, 'error')
+    throw new Error('Seedance не вернул request_id')
+  }
+
+  onLog?.(`Задача отправлена в Seedance. ID: ${requestId}`, 'success')
+  return { requestId }
+}
+
 // Sarah Icelyn lore for post generation
 const SARAH_ICELYN_LORE = `You are Sarah Icelyn, a 27-year-old woman from Bloomfield Hills, Michigan (originally Toledo, Ohio).
 Personality: Cold, elegant, restrained. Strategic observer. You sell the feeling of closeness because you fear actual intimacy.

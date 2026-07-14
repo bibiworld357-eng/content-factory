@@ -29,14 +29,17 @@ import {
 import {
   generateBogdanaIdeas,
   generateBogdanaScenario,
+  generateBogdanaSeedanceScenario,
   generateBogdanaVideoDescription,
   type BogdanaIdea,
   type BogdanaScenario,
+  type BogdanaSeedanceScenario,
 } from '@/lib/gemini'
 import {
   generateBogdanaFrame,
   BOGDANA_IMAGE_MODELS,
   submitKlingVideoTask,
+  submitSeedanceVideoTask,
   pollKlingResult,
   generateKlingAudioSequence,
   generateBogdanaThreadsPosts,
@@ -45,6 +48,8 @@ import {
   type BogdanaImageModel,
   type BogdanaThreadsPost,
 } from '@/lib/api'
+
+type PipelineMode = 'kling' | 'seedance'
 
 type RefKey = keyof NanoBananaReferenceSet
 
@@ -166,6 +171,10 @@ function StageHeader({ icon: Icon, step, title }: { icon: typeof Sparkles; step:
 export function BogdanaPipelinePanel() {
   const { apiKeys, addLog } = useContentStore()
 
+  // Pipeline mode: Kling Pro (8 frames) vs Seedance 2.0 (2 frames, no text).
+  const [pipelineMode, setPipelineMode] = useState<PipelineMode>('kling')
+  const isSeedance = pipelineMode === 'seedance'
+
   // Stage 3.1 — scenario
   const [productId, setProductId] = useState<BogdanaProductId | null>(null)
   const [ideas, setIdeas] = useState<BogdanaIdea[]>([])
@@ -173,6 +182,15 @@ export function BogdanaPipelinePanel() {
   const [scenario, setScenario] = useState<BogdanaScenario | null>(null)
   const [loadingIdeas, setLoadingIdeas] = useState(false)
   const [loadingScenario, setLoadingScenario] = useState(false)
+
+  // Seedance 2.0 pipeline state (2 frames + single transition prompt).
+  const [seedanceScenario, setSeedanceScenario] = useState<BogdanaSeedanceScenario | null>(null)
+  const [seedanceStart, setSeedanceStart] = useState<FrameSlot>({ status: 'pending' })
+  const [seedanceEnd, setSeedanceEnd] = useState<FrameSlot>({ status: 'pending' })
+  const [seedanceTransition, setSeedanceTransition] = useState('')
+  const [loadingSeedanceFrames, setLoadingSeedanceFrames] = useState(false)
+  const [loadingSeedanceVideo, setLoadingSeedanceVideo] = useState(false)
+  const [seedanceVideo, setSeedanceVideo] = useState<VideoJobResult | null>(null)
 
   // Stage 3.2 — images (2 frames per scene: start + end)
   const [refs, setRefs] = useState<NanoBananaReferenceSet>({})
@@ -267,6 +285,98 @@ export function BogdanaPipelinePanel() {
     }
   }
 
+  async function handleGenerateSeedanceScenario() {
+    if (!productId || selectedIdea === null) return
+    setLoadingScenario(true)
+    setSeedanceScenario(null)
+    setSeedanceStart({ status: 'pending' })
+    setSeedanceEnd({ status: 'pending' })
+    setSeedanceVideo(null)
+    try {
+      const result = await generateBogdanaSeedanceScenario(apiKeys.gemini, productId, ideas[selectedIdea], addLog)
+      setSeedanceScenario(result)
+      setSeedanceTransition(result.transitionPrompt)
+    } catch (err) {
+      addLog(`Gemini: ${err instanceof Error ? err.message : 'ошибка'}`, 'error')
+    } finally {
+      setLoadingScenario(false)
+    }
+  }
+
+  /** Generate the Seedance start (@image1) and end (@image2) frames. */
+  async function handleGenerateSeedanceFrames() {
+    if (!seedanceScenario) return
+    if (!refs.face) {
+      addLog('Загрузите хотя бы @image1 (лицо Богданы)', 'error')
+      return
+    }
+    setLoadingSeedanceFrames(true)
+    setSeedanceStart({ status: 'loading' })
+    setSeedanceEnd({ status: 'loading' })
+
+    let startUrl: string | undefined
+    try {
+      startUrl = await generateFrame(seedanceScenario.startFrame)
+      setSeedanceStart(startUrl ? { status: 'success', imageUrl: startUrl } : { status: 'error', error: 'нет изображения' })
+    } catch (err) {
+      setSeedanceStart({ status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
+    }
+
+    try {
+      // End frame continues from the start frame so the background/camera match (@image2).
+      const endUrl = await generateFrame(seedanceScenario.endFrame, startUrl)
+      setSeedanceEnd(endUrl ? { status: 'success', imageUrl: endUrl } : { status: 'error', error: 'нет изображения' })
+    } catch (err) {
+      setSeedanceEnd({ status: 'error', error: err instanceof Error ? err.message : 'ошибка' })
+    }
+    setLoadingSeedanceFrames(false)
+  }
+
+  async function handleGenerateSeedanceVideo() {
+    if (seedanceStart.status !== 'success' || !seedanceStart.imageUrl) {
+      addLog('Сначала сгенерируйте стартовый кадр', 'error')
+      return
+    }
+    if (seedanceEnd.status !== 'success' || !seedanceEnd.imageUrl) {
+      addLog('Сначала сгенерируйте конечный кадр', 'error')
+      return
+    }
+    if (!seedanceTransition.trim()) {
+      addLog('Пустой промпт перехода Seedance', 'error')
+      return
+    }
+    setLoadingSeedanceVideo(true)
+    setSeedanceVideo({ scene: 1, title: 'Seedance 2.0', mode: 'pair', status: 'loading' })
+    try {
+      const { requestId } = await submitSeedanceVideoTask(
+        apiKeys.wavespeed,
+        seedanceStart.imageUrl,
+        seedanceTransition.trim(),
+        { endImage: seedanceEnd.imageUrl, aspectRatio: '9:16' },
+        addLog
+      )
+      const result = await pollKlingResult(apiKeys.wavespeed, requestId, addLog)
+      setSeedanceVideo({
+        scene: 1,
+        title: 'Seedance 2.0',
+        mode: 'pair',
+        status: result.status === 'completed' ? 'success' : 'error',
+        videoUrl: result.videoUrl,
+        error: result.error,
+      })
+    } catch (err) {
+      setSeedanceVideo({
+        scene: 1,
+        title: 'Seedance 2.0',
+        mode: 'pair',
+        status: 'error',
+        error: err instanceof Error ? err.message : 'ошибка',
+      })
+    } finally {
+      setLoadingSeedanceVideo(false)
+    }
+  }
+
   /**
    * Only pass the Korzhik / product reference images when the current frame's
    * prompt actually mentions them. Otherwise those references anchor the corgi
@@ -286,7 +396,9 @@ export function BogdanaPipelinePanel() {
 
   /** Generate a single frame using the last successful frame as the top-priority visual reference. */
   async function generateFrame(prompt: string, continuityFrame?: string): Promise<string | undefined> {
-    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, scopeRefsToPrompt(prompt), continuityFrame)
+    // GPT Image / DALL·E 3 do not support @imageN tags → compile them to text.
+    const mode = imageModel === 'gpt-image' ? 'text' : 'tags'
+    const { prompt: full, referenceImages } = buildNanoBananaPrompt(prompt, scopeRefsToPrompt(prompt), continuityFrame, mode)
     return generateBogdanaFrame(imageModel, apiKeys.wavespeed, referenceImages, full, '9:16', '1k', addLog)
   }
 
@@ -484,13 +596,39 @@ export function BogdanaPipelinePanel() {
       <div className="flex items-center gap-2">
         <Sparkles className="h-5 w-5 text-primary" />
         <h1 className="text-lg font-semibold">Пайплайн Богданы</h1>
-        <span className="text-xs text-muted-foreground">Gemini 2.5 Flash · NanoBanana · Kling · Grok</span>
+        <span className="text-xs text-muted-foreground">
+          Gemini 3.5 Flash · NanoBanana / GPT Image · {isSeedance ? 'Seedance 2.0' : 'Kling'} · Grok
+        </span>
       </div>
 
       {/* ── STAGE 3.1 — Scenario ─────────────────────────────────────── */}
       <Card>
-        <StageHeader icon={Lightbulb} step="1" title="Сценарий (Gemini 2.5 Flash)" />
+        <StageHeader icon={Lightbulb} step="1" title="Сценарий (Gemini 3.5 Flash)" />
         <CardContent className="space-y-4">
+          {/* Pipeline mode */}
+          <div>
+            <p className="text-xs text-muted-foreground mb-2">Режим пайплайна</p>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { id: 'kling', label: 'Kling Pro (8 кадров)' },
+                { id: 'seedance', label: 'Seedance 2.0 (2 кадра)' },
+              ] as const).map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setPipelineMode(m.id)}
+                  className={cn(
+                    'px-3 py-1.5 rounded-lg border text-sm transition-colors',
+                    pipelineMode === m.id
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border hover:border-primary/50'
+                  )}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Step A — product */}
           <div>
             <p className="text-xs text-muted-foreground mb-2">Шаг А — выберите продукт</p>
@@ -543,13 +681,17 @@ export function BogdanaPipelinePanel() {
 
           {/* Step D — scenario */}
           {selectedIdea !== null && (
-            <Button onClick={handleGenerateScenario} disabled={loadingScenario} size="sm">
+            <Button
+              onClick={isSeedance ? handleGenerateSeedanceScenario : handleGenerateScenario}
+              disabled={loadingScenario}
+              size="sm"
+            >
               {loadingScenario ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
-              Шаг Г — подробный сценарий (4 сцены)
+              {isSeedance ? 'Шаг Г — промпты Seedance (2 кадра)' : 'Шаг Г — подробный сценарий (4 сцены)'}
             </Button>
           )}
 
-          {scenario && (
+          {!isSeedance && scenario && (
             <div className="space-y-2">
               {scenario.scenes.map((s) => (
                 <div key={s.scene} className="p-3 rounded-lg border border-border bg-card/50">
@@ -558,6 +700,19 @@ export function BogdanaPipelinePanel() {
                   <p className="text-xs text-muted-foreground mt-1 italic">Титр: {s.subtitle}</p>
                 </div>
               ))}
+            </div>
+          )}
+
+          {isSeedance && seedanceScenario && (
+            <div className="space-y-2">
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <div className="text-sm font-medium text-primary">Стартовый кадр (@image1)</div>
+                <p className="text-xs mt-1 whitespace-pre-wrap">{seedanceScenario.startFrame}</p>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <div className="text-sm font-medium text-primary">Конечный кадр (@image2)</div>
+                <p className="text-xs mt-1 whitespace-pre-wrap">{seedanceScenario.endFrame}</p>
+              </div>
             </div>
           )}
         </CardContent>
@@ -599,14 +754,50 @@ export function BogdanaPipelinePanel() {
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            8 кадров — по 2 на сцену (start + end). Последний успешный кадр автоматически становится главным референсом для следующего. Суффикс:{' '}
-            <span className="font-mono">{NANOBANANA_STYLE_SUFFIX}</span>
+            {isSeedance
+              ? '2 кадра — Стартовый (@image1) и Конечный (@image2). Конечный берёт стартовый как референс сцены (@image2) для фиксации фона и камеры.'
+              : '8 кадров — по 2 на сцену (start + end). Последний успешный кадр автоматически становится главным референсом для следующего.'}
+            {' '}Суффикс: <span className="font-mono">{NANOBANANA_STYLE_SUFFIX}</span>
           </p>
-          <Button onClick={handleGenerateImages} disabled={!scenario || loadingImages} size="sm">
-            {loadingImages ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
-            Сгенерировать все кадры
-          </Button>
-          {sceneFrames.length > 0 && (
+          {isSeedance ? (
+            <>
+              <Button
+                onClick={handleGenerateSeedanceFrames}
+                disabled={!seedanceScenario || loadingSeedanceFrames}
+                size="sm"
+              >
+                {loadingSeedanceFrames ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+                Сгенерировать 2 кадра
+              </Button>
+              {(seedanceStart.status !== 'pending' || seedanceEnd.status !== 'pending') && (
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { slot: seedanceStart, label: 'Start (@image1)' },
+                    { slot: seedanceEnd, label: 'End (@image2)' },
+                  ] as const).map(({ slot, label }) => (
+                    <div key={label} className="rounded-lg border border-border overflow-hidden">
+                      <div className="aspect-[9/16] bg-card flex items-center justify-center">
+                        {slot.imageUrl ? (
+                          <img src={slot.imageUrl} alt={label} className="w-full h-full object-cover" />
+                        ) : slot.status === 'loading' ? (
+                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground px-2 text-center">{slot.error ?? 'ожидание'}</span>
+                        )}
+                      </div>
+                      <div className="px-2 py-1 text-[10px] text-muted-foreground">{label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <Button onClick={handleGenerateImages} disabled={!scenario || loadingImages} size="sm">
+              {loadingImages ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+              Сгенерировать все кадры
+            </Button>
+          )}
+          {!isSeedance && sceneFrames.length > 0 && (
             <div className="space-y-3">
               {sceneFrames.map((sf, i) => (
                 <div key={sf.scene} className="rounded-lg border border-border p-2.5 space-y-2">
@@ -658,10 +849,56 @@ export function BogdanaPipelinePanel() {
         </CardContent>
       </Card>
 
-      {/* ── STAGE 3.3 — Video + Audio ────────────────────────────────── */}
+      {/* ── STAGE 3.3 — Video ────────────────────────────────────────── */}
       <Card>
-        <StageHeader icon={Film} step="3" title="Видео и звук (Kling)" />
+        <StageHeader icon={Film} step="3" title={isSeedance ? 'Анимация (Seedance 2.0)' : 'Видео и звук (Kling)'} />
         <CardContent className="space-y-4">
+          {isSeedance && (
+            <>
+              <p className="text-[11px] text-muted-foreground">
+                Seedance сам генерирует звук по промпту (без озвучки и субтитров). Стартовый кадр (@image1), конечный кадр (@image2) и промпт перехода уходят в Wavespeed.
+              </p>
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">Промпт перехода Seedance</p>
+                <textarea
+                  value={seedanceTransition}
+                  onChange={(e) => setSeedanceTransition(e.target.value)}
+                  disabled={loadingSeedanceVideo}
+                  rows={6}
+                  placeholder="3D Claymation stop-motion. Multishot ... AUDIO: ..."
+                  className="w-full rounded-lg border border-border bg-card/50 p-2.5 text-xs font-mono resize-y disabled:opacity-50"
+                />
+              </div>
+              <Button
+                onClick={handleGenerateSeedanceVideo}
+                disabled={
+                  loadingSeedanceVideo ||
+                  seedanceStart.status !== 'success' ||
+                  seedanceEnd.status !== 'success' ||
+                  !seedanceTransition.trim()
+                }
+                size="sm"
+              >
+                {loadingSeedanceVideo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />}
+                Анимировать в Seedance
+              </Button>
+              {seedanceVideo && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-mono">Seedance 2.0</span>
+                  {seedanceVideo.status === 'loading' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  {seedanceVideo.status === 'success' && seedanceVideo.videoUrl && (
+                    <a href={seedanceVideo.videoUrl} target="_blank" rel="noreferrer" className="text-primary underline">
+                      видео готово
+                    </a>
+                  )}
+                  {seedanceVideo.status === 'error' && <span className="text-destructive">{seedanceVideo.error}</span>}
+                </div>
+              )}
+            </>
+          )}
+
+          {!isSeedance && (
+          <>
           <p className="text-[11px] text-muted-foreground">
             Выберите, какие кадры отправить в Kling: пара (Start→End) или один кадр (Start). Тег «Static camera» добавляется автоматически.
           </p>
@@ -812,6 +1049,8 @@ export function BogdanaPipelinePanel() {
                 </li>
               ))}
             </ol>
+          )}
+          </>
           )}
         </CardContent>
       </Card>
