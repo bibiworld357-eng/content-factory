@@ -40,11 +40,21 @@ export interface NewsResearchState {
   currentStep: string
 }
 
+// Client-side keys are sourced from Vite env vars (VITE_*) when provided, with a
+// fallback to the previously bundled defaults so existing setups keep working.
+const env = import.meta.env
 export const DEFAULT_API_KEYS: ApiKeys = {
-  grok: 'xai-1MVZjm5QQp8mLBFN7NM0h6T8QE8lJFssWLexf8TOXgtB3eAjaQHTLAKhIH3Ek0SHsCHXsG9BvHsR9Bx1',
-  wavespeed: '6596ca1d99d8f874b122c7c1257f86c2ed865e49cef128dbceee99750d756160',
-  minimax: 'sk-cp-CxeADii40oheASIHcLZI3LhF3Tw3QuE48iNEJd_pfdAHdTlHfbKXegOgvZIxwvInk61RhFuJ4kBsEL0F5SMmeeXOqS3SnuKheF5eRO8oZFHEhP0iLkMma7s',
-  captions: 'sk-h1fsmkfc6d-4Xyokckm4LuLbDCkp4N0skjJwCCS1tZ4',
+  grok:
+    env.VITE_GROK_API_KEY ||
+    'xai-1MVZjm5QQp8mLBFN7NM0h6T8QE8lJFssWLexf8TOXgtB3eAjaQHTLAKhIH3Ek0SHsCHXsG9BvHsR9Bx1',
+  gemini: env.VITE_GEMINI_API_KEY || '',
+  wavespeed:
+    env.VITE_WAVESPEED_API_KEY ||
+    '6596ca1d99d8f874b122c7c1257f86c2ed865e49cef128dbceee99750d756160',
+  minimax:
+    env.VITE_MINIMAX_API_KEY ||
+    'sk-cp-CxeADii40oheASIHcLZI3LhF3Tw3QuE48iNEJd_pfdAHdTlHfbKXegOgvZIxwvInk61RhFuJ4kBsEL0F5SMmeeXOqS3SnuKheF5eRO8oZFHEhP0iLkMma7s',
+  captions: env.VITE_CAPTIONS_API_KEY || 'sk-h1fsmkfc6d-4Xyokckm4LuLbDCkp4N0skjJwCCS1tZ4',
 }
 
 const DEFAULT_MASTER_PROMPT = `Analyze the uploaded photo of the girl and create detailed variation prompts for Nano Banana 2 Edit model. Keep exact same appearance, clothing, hair, environment and lighting. Change ONLY: pose, camera angle, framing (close-up / medium / full), head tilt, gaze direction, subtle emotion/facial expression.`
@@ -88,7 +98,7 @@ interface ContentStore {
   selectedModelsForBatch: string[]
   showModelSelector: boolean
   batchFrameCount: number
-  activeTab: 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale'
+  activeTab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer'
   voiceResult: MinimaxTTSResult | null
   pendingVoiceText: string | null
   newsResearch: NewsResearchState | null
@@ -129,7 +139,7 @@ interface ContentStore {
   setSelectedModelsForBatch: (models: string[]) => void
   setShowModelSelector: (show: boolean) => void
   setBatchFrameCount: (count: number) => void
-  setActiveTab: (tab: 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale') => void
+  setActiveTab: (tab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer') => void
   setVoiceResult: (result: MinimaxTTSResult | null) => void
   setPendingVoiceText: (text: string | null) => void
   setNewsResearch: (result: NewsResearchState | null) => void
@@ -178,7 +188,7 @@ export const useContentStore = create<ContentStore>()(
       selectedModelsForBatch: [],
       showModelSelector: false,
       batchFrameCount: 1,
-      activeTab: 'variations',
+      activeTab: 'bogdana',
       voiceResult: null,
       pendingVoiceText: null,
       newsResearch: null,
@@ -469,6 +479,10 @@ export const useContentStore = create<ContentStore>()(
         // If persisted keys are empty/missing, fall back to defaults
         if (!p.apiKeys?.grok || !p.apiKeys?.wavespeed) {
           merged.apiKeys = c.apiKeys
+        }
+        // Backfill the Gemini key for stores persisted before it existed
+        if (merged.apiKeys && merged.apiKeys.gemini === undefined) {
+          merged.apiKeys = { ...merged.apiKeys, gemini: c.apiKeys.gemini }
         }
         // Never rehydrate ephemeral UI state from localStorage
         merged.showAutoKeyToast = c.showAutoKeyToast

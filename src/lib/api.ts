@@ -1,12 +1,33 @@
 import type { LogLevel, MinimaxTTSResult } from '@/types'
+import {
+  KLING_AUDIO_MAX_CHARS,
+  BOGDANA_VIDEO_DNA,
+  clampKlingAudioPrompts,
+  getBogdanaProduct,
+  withStaticCamera,
+  type BogdanaProductId,
+} from './bogdana'
 export type { MinimaxTTSResult }
 
 export type LogFn = (message: string, level?: LogLevel) => void
 
-export const DNA = `A young woman with subtle, natural heterochromia — her left eye is a soft, realistic blue and her right eye is a natural warm brown, both matching the brightness and lighting of the environment without appearing overly vivid. She has long black hair with a full straight fringe and soft natural waves reaching to the chest.`
+/**
+ * Build an `Authorization: Bearer <key>` header value.
+ *
+ * The key is trimmed to strip stray whitespace/newlines that leak in from copy-
+ * paste or `.env` files — a common cause of spurious 401 Unauthorized responses
+ * (e.g. from Wavespeed). Throws a clear error when the key is missing so the UI
+ * can prompt for it instead of firing an unauthenticated request.
+ */
+export function bearer(key: string, service = 'API'): string {
+  const trimmed = (key ?? '').trim()
+  if (!trimmed) {
+    throw new Error(`${service}: не задан ключ авторизации (401). Укажите ключ в настройках.`)
+  }
+  return `Bearer ${trimmed}`
+}
 
-// IceShelf Kling Element ID - for consistent character in video generation
-export const ICESHELF_ELEMENT_ID = '310069756440507'
+export const DNA = `A young woman with subtle, natural heterochromia — her left eye is a soft, realistic blue and her right eye is a natural warm brown, both matching the brightness and lighting of the environment without appearing overly vivid. She has long black hair with a full straight fringe and soft natural waves reaching to the chest.`
 
 // DNA Reference Image - Base64 encoded face reference
 // This image will be sent as second reference to Nano Banana 2 Edit API
@@ -52,7 +73,7 @@ export async function getWavespeedBalance(
 
     const response = await fetch(apiUrl, {
       headers: {
-        Authorization: `Bearer ${wavespeedKey}`,
+        Authorization: bearer(wavespeedKey, 'Wavespeed'),
       },
     })
 
@@ -170,7 +191,7 @@ export async function generatePromptsWithGrok(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${grokKey}`,
+          Authorization: bearer(grokKey, 'Grok'),
         },
         body: JSON.stringify(payload),
       }).catch((err) => {
@@ -265,6 +286,9 @@ export interface WavespeedOptions {
   aspectRatio?: string
   intensity?: number
   extraImages?: string[] // additional base64 data URLs to append after the main image
+  // When false, skips the legacy hard-coded character DNA text + reference image.
+  // Needed by pipelines (e.g. Bogdana) whose identity comes from their own refs.
+  injectDefaultDna?: boolean
 }
 
 export async function editImageWithWavespeed(
@@ -275,17 +299,17 @@ export async function editImageWithWavespeed(
   onLog?: LogFn,
   options: WavespeedOptions = {}
 ): Promise<WavespeedResult> {
-  const { resolution = '1k', aspectRatio = '1:1', intensity = 50 } = options
+  const { resolution = '1k', aspectRatio = '1:1', intensity = 50, injectDefaultDna = true } = options
   onLog?.(`Запуск Nano Banana 2 кадр #${frameIndex + 1} [Разр: ${resolution} | AR: ${aspectRatio} | Инт.: ${intensity}]...`)
 
   const mimeType = imageBase64.startsWith('/9j/') ? 'image/jpeg' : 'image/png'
   const dataUrl = `data:${mimeType};base64,${imageBase64}`
-  const fullPrompt = `${DNA}\n\n${prompt}`
+  const fullPrompt = injectDefaultDna ? `${DNA}\n\n${prompt}` : prompt
 
   const imageStrength = Math.round((intensity / 100) * 100) / 100
 
-  // Load DNA reference image
-  const dnaRefImage = await loadDnaReferenceImage()
+  // Load the legacy DNA reference image only when the default DNA is requested.
+  const dnaRefImage = injectDefaultDna ? await loadDnaReferenceImage() : ''
 
   const payload = {
     images: [
@@ -327,7 +351,7 @@ export async function editImageWithWavespeed(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${wavespeedKey}`,
+          Authorization: bearer(wavespeedKey, 'Wavespeed'),
         },
         body: JSON.stringify(payload),
       })
@@ -415,7 +439,7 @@ export async function editImageWithWavespeed(
     try {
       const pollResponse = await fetch(pollUrl, {
         headers: {
-          Authorization: `Bearer ${wavespeedKey}`,
+          Authorization: bearer(wavespeedKey, 'Wavespeed'),
         },
       })
 
@@ -452,7 +476,7 @@ export async function editImageWithWavespeed(
               console.log(`[Wavespeed] trying: ${tryUrl}`)
               const resultResponse = await fetch(tryUrl, {
                 headers: {
-                  Authorization: `Bearer ${wavespeedKey}`,
+                  Authorization: bearer(wavespeedKey, 'Wavespeed'),
                 },
               })
               
@@ -610,7 +634,7 @@ export async function generateVideoPromptsWithGrok(
           const httpResponse = await fetch('https://api.x.ai/v1/responses', {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${grokKey}`,
+              Authorization: bearer(grokKey, 'Grok'),
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(payload),
@@ -677,13 +701,33 @@ export async function generateVideoPromptsWithGrok(
   return results
 }
 
+/** Selectable Kling image-to-video models on Wavespeed and their allowed durations. */
+export interface KlingModel {
+  id: string
+  label: string
+  /** Wavespeed path after `/api/`, e.g. `v3/kwaivgi/kling-v3.0-pro/image-to-video`. */
+  endpoint: string
+  durations: number[]
+}
+
+export const KLING_MODELS: KlingModel[] = [
+  { id: 'kling-v3.0-pro', label: 'Kling 3.0 Pro', endpoint: 'v3/kwaivgi/kling-v3.0-pro/image-to-video', durations: [3, 5, 10] },
+  { id: 'kling-v2.5-turbo-pro', label: 'Kling 2.5 Turbo Pro', endpoint: 'v3/kwaivgi/kling-v2.5-turbo-pro/image-to-video', durations: [5, 10] },
+  { id: 'kling-v2.1-master', label: 'Kling 2.1 Master', endpoint: 'v3/kwaivgi/kling-v2.1-master/image-to-video', durations: [5, 10] },
+  { id: 'kling-v2.1-pro', label: 'Kling 2.1 Pro', endpoint: 'v3/kwaivgi/kling-v2.1-pro/image-to-video', durations: [5, 10] },
+]
+
+export const DEFAULT_KLING_MODEL = KLING_MODELS[0]
+
 export interface KlingOptions {
-  duration: 3 | 5 | 10 | 15
+  duration: number
   aspectRatio?: string
   withSound?: boolean
   cfgScale?: number
   negativePrompt?: string
   endImage?: string
+  /** Wavespeed endpoint path; defaults to the current Kling 3.0 Pro model. */
+  modelEndpoint?: string
 }
 
 export interface KlingTaskResponse {
@@ -705,19 +749,21 @@ export async function submitKlingVideoTask(
   onLog?: LogFn
 ): Promise<KlingTaskResponse> {
   const { duration, aspectRatio = '9:16', withSound = false, cfgScale = 0.5, negativePrompt, endImage } = options
+  const modelEndpoint = options.modelEndpoint ?? DEFAULT_KLING_MODEL.endpoint
 
   const hasEndFrame = endImage && endImage.trim().length > 0
-  onLog?.(`Отправка задачи в Kling [${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
-  onLog?.(`✨ IceShelf Element (${ICESHELF_ELEMENT_ID}) применен для консистентности персонажа`, 'success')
+  onLog?.(`Отправка задачи в Kling [${modelEndpoint.split('/')[2] ?? 'kling'}, ${duration}s, ${aspectRatio}, звук:${withSound ? 'да' : 'нет'}${hasEndFrame ? ', END кадр' : ''}]...`)
+
+  // Always inject the "Static camera" tag to prevent background flicker.
+  const motionPrompt = withStaticCamera(prompt)
 
   const payload: Record<string, unknown> = {
     image: imageUrl,
-    prompt: `${DNA}\n\n${prompt}`,
+    prompt: `${BOGDANA_VIDEO_DNA}\n\n${motionPrompt}`,
     duration,
     aspect_ratio: aspectRatio,
     cfg_scale: cfgScale,
     enable_audio: withSound,
-    element_list: [{ element_id: ICESHELF_ELEMENT_ID }], // ALWAYS include IceShelf element for character consistency
   }
 
   if (negativePrompt && negativePrompt.trim()) {
@@ -728,7 +774,7 @@ export async function submitKlingVideoTask(
     payload.end_image = endImage
   }
 
-  console.log('[Kling Submit] → POST /api/v3/kwaivgi/kling-v3.0-pro/image-to-video', {
+  console.log(`[Kling Submit] → POST /api/${modelEndpoint}`, {
     duration,
     aspectRatio,
     withSound,
@@ -736,13 +782,13 @@ export async function submitKlingVideoTask(
   })
 
   const apiUrl = import.meta.env.DEV
-    ? '/api/wavespeed/v3/kwaivgi/kling-v3.0-pro/image-to-video'
-    : 'https://api.wavespeed.ai/api/v3/kwaivgi/kling-v3.0-pro/image-to-video'
+    ? `/api/wavespeed/${modelEndpoint}`
+    : `https://api.wavespeed.ai/api/${modelEndpoint}`
 
   const httpResponse = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -810,7 +856,7 @@ export async function pollKlingResult(
 
     const httpResponse = await fetch(apiUrl, {
       headers: {
-        Authorization: `Bearer ${wavespeedKey}`,
+        Authorization: bearer(wavespeedKey, 'Wavespeed'),
       },
     })
 
@@ -915,7 +961,7 @@ export async function pollKlingResult(
             console.log('[Kling Poll] videoUrl is API endpoint, fetching actual video URL from:', videoUrl)
             const videoResponse = await fetch(videoUrl, {
               headers: {
-                'Authorization': `Bearer ${wavespeedKey}`,
+                'Authorization': bearer(wavespeedKey, 'Wavespeed'),
               },
             })
             const videoData = await videoResponse.json() as any
@@ -975,6 +1021,90 @@ export async function pollKlingResult(
   // Timeout after max attempts
   onLog?.(`Превышен лимит ожидания (${maxAttempts} попыток)`, 'error')
   return { status: 'failed', error: 'Превышено время ожидания' }
+}
+
+// ── Seedance 2.0 (first+last frame image-to-video via Wavespeed) ─────────────
+
+/**
+ * Wavespeed path (after `/api/`) for the Seedance 2.0 image-to-video model.
+ * NOTE: if Wavespeed returns 404, adjust this slug to the model available on
+ * your key (mirrors how KLING_MODELS endpoints are configured).
+ */
+export const SEEDANCE_ENDPOINT = 'v3/bytedance/seedance-v2/image-to-video'
+
+export interface SeedanceOptions {
+  /** Base64 data URL / URL of the END frame (@image2). */
+  endImage: string
+  aspectRatio?: string
+  duration?: number
+}
+
+/**
+ * Submit a Seedance 2.0 image-to-video task with a start frame (@image1),
+ * an end frame (@image2) and the transition prompt (which already contains the
+ * in-video AUDIO sound-effect instructions). Authorizes with the Wavespeed key
+ * (VITE_WAVESPEED_API_KEY). Poll the result with `pollKlingResult`.
+ */
+export async function submitSeedanceVideoTask(
+  wavespeedKey: string,
+  startImage: string,
+  prompt: string,
+  options: SeedanceOptions,
+  onLog?: LogFn
+): Promise<KlingTaskResponse> {
+  const { endImage, aspectRatio = '9:16', duration = 5 } = options
+  onLog?.(`Отправка задачи в Seedance 2.0 [${duration}s, ${aspectRatio}]...`)
+
+  const payload: Record<string, unknown> = {
+    image: startImage,
+    end_image: endImage,
+    prompt,
+    aspect_ratio: aspectRatio,
+    duration,
+  }
+
+  const apiUrl = import.meta.env.DEV
+    ? `/api/wavespeed/${SEEDANCE_ENDPOINT}`
+    : `https://api.wavespeed.ai/api/${SEEDANCE_ENDPOINT}`
+
+  const httpResponse = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!httpResponse.ok) {
+    const errorData = await httpResponse.json().catch(() => ({}))
+    const msg = `Seedance ${httpResponse.status}: ${JSON.stringify(errorData)}`
+    onLog?.(msg, 'error')
+    throw new Error(msg)
+  }
+
+  const responseData = (await httpResponse.json()) as {
+    request_id?: string
+    requestId?: string
+    id?: string
+    data?: { request_id?: string; requestId?: string; id?: string }
+  }
+
+  const requestId =
+    responseData.request_id ??
+    responseData.requestId ??
+    responseData.id ??
+    responseData.data?.request_id ??
+    responseData.data?.requestId ??
+    responseData.data?.id
+
+  if (!requestId) {
+    onLog?.(`Seedance ответ: ${JSON.stringify(responseData)}`, 'error')
+    throw new Error('Seedance не вернул request_id')
+  }
+
+  onLog?.(`Задача отправлена в Seedance. ID: ${requestId}`, 'success')
+  return { requestId }
 }
 
 // Sarah Icelyn lore for post generation
@@ -1039,7 +1169,7 @@ async function callGrokResponses(grokKey: string, messages: object[], tools?: ob
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -1422,7 +1552,7 @@ Return ONLY valid JSON (no markdown):
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -1465,7 +1595,7 @@ Return ONLY valid JSON (no markdown):
   try {
     const trResponse = await fetch('https://api.x.ai/v1/responses', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${grokKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: bearer(grokKey, 'Grok'), 'Content-Type': 'application/json' },
       body: JSON.stringify(translateBody),
     })
     if (trResponse.ok) {
@@ -1778,7 +1908,7 @@ Return ONLY valid JSON (no markdown fences):
 
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${grokKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: bearer(grokKey, 'Grok'), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
 
@@ -1827,7 +1957,7 @@ export interface MinimaxVoice {
 export async function fetchMinimaxVoices(minimaxKey: string): Promise<MinimaxVoice[]> {
   const resp = await fetch('/api/minimax/get_voice', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${minimaxKey}` },
+    headers: { 'Content-Type': 'application/json', 'Authorization': bearer(minimaxKey, 'Minimax') },
     body: JSON.stringify({ voice_type: 'voice_cloning' }),
   })
   if (!resp.ok) throw new Error(`Minimax get_voice error ${resp.status}`)
@@ -1855,7 +1985,7 @@ export async function generateVoiceMinimax(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${minimaxKey}`,
+      'Authorization': bearer(minimaxKey, 'Minimax'),
     },
     body: JSON.stringify({
       model,
@@ -2079,7 +2209,7 @@ Return JSON:
 
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
 
@@ -2122,7 +2252,8 @@ export async function generateNanoBananaMultiRef(
   aspectRatio: string,
   resolution: string,
   count: number,
-  onLog?: LogFn
+  onLog?: LogFn,
+  injectDefaultDna = true
 ): Promise<NanoBananaMultiResult[]> {
   onLog?.(`🖼️ Запускаю ${count} генераций Nano Banana 2 Edit...`, 'info')
 
@@ -2133,7 +2264,7 @@ export async function generateNanoBananaMultiRef(
       prompt,
       i,
       onLog,
-      { resolution, aspectRatio, intensity: 50, extraImages: referenceImages.slice(1) }
+      { resolution, aspectRatio, intensity: 50, extraImages: referenceImages.slice(1), injectDefaultDna }
     ).then((res) => ({ imageUrl: res.imageUrl, index: i }))
   )
 
@@ -2151,6 +2282,50 @@ export async function generateNanoBananaMultiRef(
   if (successes.length === 0) throw new Error('Все варианты Nano Banana 2 завершились ошибкой')
   onLog?.(`✅ Получено ${successes.length}/${count} вариантов изображения`, 'success')
   return successes
+}
+
+// ── Bogdana image generation ────────────────────────────────────────────────
+// Model choices for the Bogdana pipeline's frame generation. Both skip the
+// legacy hard-coded character DNA so identity comes only from Bogdana's refs.
+export type BogdanaImageModel = 'nano-banana' | 'gpt-image'
+
+export const BOGDANA_IMAGE_MODELS: { id: BogdanaImageModel; label: string }[] = [
+  { id: 'nano-banana', label: 'Nano Banana 2' },
+  { id: 'gpt-image', label: 'GPT Image' },
+]
+
+export async function generateBogdanaFrame(
+  model: BogdanaImageModel,
+  wavespeedKey: string,
+  referenceImages: string[],
+  prompt: string,
+  aspectRatio: string,
+  resolution: string,
+  onLog?: LogFn
+): Promise<string | undefined> {
+  if (model === 'gpt-image') {
+    const res = await editImageWithGPTImage2(
+      wavespeedKey,
+      referenceImages,
+      prompt,
+      resolution,
+      aspectRatio,
+      onLog,
+      false
+    )
+    return res.imageUrl
+  }
+  const results = await generateNanoBananaMultiRef(
+    wavespeedKey,
+    referenceImages,
+    prompt,
+    aspectRatio,
+    resolution,
+    1,
+    onLog,
+    false
+  )
+  return results[0]?.imageUrl
 }
 
 // ── Convert any video to 9:16 aspect ratio (letterbox/pillarbox) ──────────
@@ -2307,7 +2482,7 @@ export async function upscaleWithCrystal(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2344,7 +2519,7 @@ export async function upscaleWithCrystal(
     await new Promise(resolve => setTimeout(resolve, delayMs))
     
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
     
     if (!pollResp.ok) {
@@ -2508,7 +2683,7 @@ export async function submitInfiniteTalk(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(body),
   })
@@ -2539,7 +2714,7 @@ export async function submitInfiniteTalk(
     await new Promise((r) => setTimeout(r, pollInterval))
 
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
     if (!pollResp.ok) continue
 
@@ -2647,7 +2822,7 @@ Return JSON:
 
   const httpResp = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
   if (!httpResp.ok) {
@@ -2729,7 +2904,7 @@ export async function editImageWithZImageTurboLora(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2758,7 +2933,7 @@ export async function editImageWithZImageTurboLora(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -2780,13 +2955,14 @@ export async function editImageWithGPTImage2(
   prompt: string,
   resolution: string,
   aspectRatio: string,
-  onLog?: LogFn
+  onLog?: LogFn,
+  injectDefaultDna = true
 ): Promise<WavespeedResult> {
   onLog?.('🖼️ Запускаю GPT Image 2 Edit...', 'info')
 
-  // Load DNA reference image
-  const dnaRefImage = await loadDnaReferenceImage()
-  const fullPrompt = `${DNA}\n\n${prompt}`
+  // Load the legacy DNA reference image only when the default DNA is requested.
+  const dnaRefImage = injectDefaultDna ? await loadDnaReferenceImage() : ''
+  const fullPrompt = injectDefaultDna ? `${DNA}\n\n${prompt}` : prompt
 
   const apiUrl = import.meta.env.DEV
     ? '/api/wavespeed/v3/openai/gpt-image-2/edit'
@@ -2806,7 +2982,7 @@ export async function editImageWithGPTImage2(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -2835,7 +3011,7 @@ export async function editImageWithGPTImage2(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -2927,7 +3103,7 @@ Target length: 200-250 words of pure technical specifications.`
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -3402,7 +3578,7 @@ Be explicit, detailed, and professional in describing the NSFW scene.`
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(payload),
@@ -3471,7 +3647,7 @@ export async function editImageWithSeedream(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -3500,7 +3676,7 @@ export async function editImageWithSeedream(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -3549,7 +3725,7 @@ export async function editImageWithGrokImagineWavespeed(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${wavespeedKey}`,
+      Authorization: bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -3578,7 +3754,7 @@ export async function editImageWithGrokImagineWavespeed(
 
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 3000))
-    const pollResp = await fetch(pollUrl!, { headers: { Authorization: `Bearer ${wavespeedKey}` } })
+    const pollResp = await fetch(pollUrl!, { headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') } })
     if (!pollResp.ok) continue
     const pollData = await pollResp.json() as Record<string, unknown>
     const result = (pollData.data ?? pollData) as SubmitResp
@@ -3619,7 +3795,7 @@ export async function editImageWithGrokImage(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
     },
     body: JSON.stringify(payload),
   })
@@ -4077,7 +4253,7 @@ WARNING: Fabricated URLs, duplicate links, and old content (>48h) will be detect
   const response = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -4207,7 +4383,7 @@ Return ONLY valid JSON (no markdown, no extra text):
   const response = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${grokKey}`,
+      Authorization: bearer(grokKey, 'Grok'),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -4325,7 +4501,7 @@ Return JSON format:
 
   const httpResponse = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${grokKey}` },
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
     body: JSON.stringify(payload),
   })
 
@@ -4410,7 +4586,7 @@ export async function submitKlingVideoToAudio(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${wavespeedKey}`,
+      'Authorization': bearer(wavespeedKey, 'Wavespeed'),
     },
     body: JSON.stringify(payload),
   })
@@ -4458,7 +4634,7 @@ export async function pollKlingVideoToAudioResult(
       : `https://api.wavespeed.ai/api/v3/status/${requestId}`
 
     const pollResp = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${wavespeedKey}` },
+      headers: { Authorization: bearer(wavespeedKey, 'Wavespeed') },
     })
 
     if (!pollResp.ok) {
@@ -4487,4 +4663,139 @@ export async function pollKlingVideoToAudioResult(
   }
 
   throw new Error('Kling V2A: превышено время ожидания (3 минуты)')
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Bogdana pipeline — Grok helpers (Stage 3.3 audio & Stage 3.4 Threads)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Extract the message text from an xAI /v1/responses payload. */
+function extractGrokText(data: unknown): string {
+  const output = (data as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }).output ?? []
+  const messageOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
+  return (
+    messageOutput?.content?.find((c) => c.type === 'output_text')?.text ??
+    messageOutput?.content?.[0]?.text ??
+    ''
+  ).trim()
+}
+
+async function callGrokJson(grokKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const payload = {
+    model: 'grok-4.20-reasoning',
+    input: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: [{ type: 'input_text', text: userPrompt }] },
+    ],
+    temperature: 0.8,
+    store: false,
+  }
+
+  const httpResponse = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
+    body: JSON.stringify(payload),
+  })
+
+  if (!httpResponse.ok) {
+    const err = await httpResponse.json().catch(() => ({}))
+    throw new Error(`Grok ${httpResponse.status}: ${JSON.stringify(err)}`)
+  }
+
+  return extractGrokText(await httpResponse.json())
+}
+
+function parseJsonArray<T>(raw: string): T[] {
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
+  const match = cleaned.match(/\[[\s\S]*\]/)
+  if (!match) throw new Error(`Grok вернул невалидный JSON: ${raw.slice(0, 200)}`)
+  return JSON.parse(match[0]) as T[]
+}
+
+/**
+ * Stage 3.3 (audio): generate a list of SEQUENTIAL sound prompts for a scene.
+ * Each returned prompt is hard-clamped to 200 characters (Kling Audio limit).
+ */
+export async function generateKlingAudioSequence(
+  grokKey: string,
+  sceneDescription: string,
+  userWishes: string,
+  onLog?: LogFn,
+  count = 4
+): Promise<string[]> {
+  onLog?.('🔊 Grok: генерирую последовательность звуков для Kling Audio...', 'info')
+
+  const systemPrompt = `You are a sound designer for 3D claymation stop-motion clips.
+Return ONLY a JSON array of short, SEQUENTIAL sound-effect prompts (English).
+Each prompt describes ONE sound event in playback order and MUST be at most ${KLING_AUDIO_MAX_CHARS} characters. No markdown, no extra text.`
+
+  const userPrompt = `Scene: ${sceneDescription}
+${userWishes.trim() ? `Extra wishes: ${userWishes.trim()}\n` : ''}Return exactly ${count} sequential sound prompts as a JSON array of strings, e.g. ["...", "...", "...", "..."]. Each string <= ${KLING_AUDIO_MAX_CHARS} chars.`
+
+  const raw = await callGrokJson(grokKey, systemPrompt, userPrompt)
+  const list = parseJsonArray<string>(raw)
+  const clamped = clampKlingAudioPrompts(list.map((s) => String(s)))
+
+  if (clamped.length === 0) throw new Error('Grok не вернул звуковые промпты')
+  onLog?.(`✅ Готово ${clamped.length} звук(ов), каждый ≤ ${KLING_AUDIO_MAX_CHARS} симв.`, 'success')
+  return clamped
+}
+
+export interface BogdanaThreadsPost {
+  /** Detected trend / audience pain the post reacts to. */
+  trend: string
+  /** Post body (triggering, ironic), from the girl's POV. */
+  text: string
+  /** Whether this post natively integrates the qeep product. */
+  hasProduct: boolean
+  /** qeep article — present only for the single product-integration post. */
+  article?: string
+}
+
+/**
+ * Stage 3.4: use Grok (X/Twitter access) to parse trends & audience pains and
+ * write viral, ironic Threads posts from the girl's POV. Most posts are on
+ * abstract/topical themes WITHOUT the product; exactly one softly integrates it.
+ */
+export async function generateBogdanaThreadsPosts(
+  grokKey: string,
+  productId: BogdanaProductId,
+  onLog?: LogFn,
+  count = 5
+): Promise<BogdanaThreadsPost[]> {
+  const product = getBogdanaProduct(productId)
+  const withoutProduct = Math.max(count - 1, 0)
+  onLog?.(`🧵 Grok: парсю тренды и пишу ${count} постов для Threads (${withoutProduct} без продукта + 1 с интеграцией)...`, 'info')
+
+  const systemPrompt = `You write viral, ironic Threads posts in Russian, first-person, from a young woman's POV (Bogdana — a 22 y.o. designer from Saint Petersburg, "clean girl").
+Use current X/Twitter trends and audience pains (burnout, remote work, women's health, relationships, everyday absurd) as hooks.
+Goal: provoke arguments, laughter, or "это я" comments.
+IMPORTANT: Most posts must be pure lifestyle/topical takes WITHOUT any product or brand mention. Only ONE post may softly, natively integrate the product — no ads tone, no hard article dumping.
+Return ONLY raw JSON, no markdown.`
+
+  const userPrompt = `Напиши ровно ${count} виральных, ироничных поста для Threads от лица девушки (Богданы).
+- ${withoutProduct} постов — на отвлечённые актуальные темы (выгорание, удалёнка, женское здоровье, отношения, бытовой абсурд), БЕЗ упоминания продукта или бренда. Для них "hasProduct": false и без поля article.
+- 1 пост — мягкая нативная интеграция продукта ${product.name} (снимает ${product.pain}); упомяни артикул ${product.article} ненавязчиво, без рекламного тона. Для него "hasProduct": true и "article": "${product.article}".
+Верни строгий JSON-массив вида:
+[
+  { "trend": "<тренд/боль>", "text": "<текст поста>", "hasProduct": false },
+  { "trend": "<тренд/боль>", "text": "<текст поста с мягкой интеграцией>", "hasProduct": true, "article": "${product.article}" }
+]`
+
+  const raw = await callGrokJson(grokKey, systemPrompt, userPrompt)
+  const posts = parseJsonArray<BogdanaThreadsPost>(raw)
+    .map((p) => {
+      const hasProduct = Boolean(p.hasProduct)
+      return {
+        trend: String(p.trend ?? ''),
+        text: String(p.text ?? ''),
+        hasProduct,
+        ...(hasProduct ? { article: String(p.article ?? product.article) } : {}),
+      }
+    })
+    .filter((p) => p.text.length > 0)
+
+  if (posts.length === 0) throw new Error('Grok не вернул посты для Threads')
+  onLog?.(`✅ Готово ${posts.length} постов для Threads`, 'success')
+  return posts
 }

@@ -20,10 +20,12 @@ interface Props {
 export function ApiKeyModal({ open, onClose }: Props) {
   const { apiKeys, setApiKeys } = useContentStore()
   const [grokKey, setGrokKey] = useState(apiKeys.grok)
+  const [geminiKey, setGeminiKey] = useState(apiKeys.gemini ?? '')
   const [wavespeedKey, setWavespeedKey] = useState(apiKeys.wavespeed)
   const [minimaxKey, setMinimaxKey] = useState(apiKeys.minimax)
   const [captionsKey, setCaptionsKey] = useState(apiKeys.captions ?? '')
   const [showGrok, setShowGrok] = useState(false)
+  const [showGemini, setShowGemini] = useState(false)
   const [showWavespeed, setShowWavespeed] = useState(false)
   const [showMinimax, setShowMinimax] = useState(false)
   const [showCaptions, setShowCaptions] = useState(false)
@@ -34,6 +36,7 @@ export function ApiKeyModal({ open, onClose }: Props) {
   useEffect(() => {
     if (open) {
       setGrokKey(apiKeys.grok)
+      setGeminiKey(apiKeys.gemini ?? '')
       setWavespeedKey(apiKeys.wavespeed)
       setMinimaxKey(apiKeys.minimax)
       setCaptionsKey(apiKeys.captions ?? '')
@@ -42,7 +45,7 @@ export function ApiKeyModal({ open, onClose }: Props) {
 
   function handleSave() {
     if (!canSave) return
-    setApiKeys({ grok: grokKey.trim(), wavespeed: wavespeedKey.trim(), minimax: minimaxKey.trim(), captions: captionsKey.trim() })
+    setApiKeys({ grok: grokKey.trim(), gemini: geminiKey.trim(), wavespeed: wavespeedKey.trim(), minimax: minimaxKey.trim(), captions: captionsKey.trim() })
     onClose()
   }
 
@@ -85,6 +88,31 @@ export function ApiKeyModal({ open, onClose }: Props) {
                 tabIndex={-1}
               >
                 {showGrok ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="gemini-key" className="text-foreground/90">
+              Google Gemini API Key <span className="text-muted-foreground font-normal">(AI Studio · сценарии)</span>
+            </Label>
+            <div className="relative">
+              <Input
+                id="gemini-key"
+                type={showGemini ? 'text' : 'password'}
+                placeholder="AIza..."
+                value={geminiKey}
+                onChange={(e) => setGeminiKey(e.target.value)}
+                className="pr-10 font-mono text-xs"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowGemini((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
+              >
+                {showGemini ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
           </div>

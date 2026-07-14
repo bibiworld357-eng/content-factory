@@ -1,11 +1,20 @@
-import { Layers, Video, Newspaper, Clapperboard, Mic, MonitorPlay, Subtitles, PenLine, ImagePlay, Sparkles, ZoomIn } from 'lucide-react'
+import { Layers, Video, Newspaper, Clapperboard, Mic, MonitorPlay, Subtitles, PenLine, ImagePlay, Sparkles, ZoomIn, Wand2, Copy } from 'lucide-react'
 import { useContentStore } from '@/store/useContentStore'
 import { cn } from '@/lib/utils'
 
 export function TabNavigation() {
   const { activeTab, setActiveTab, videoQueue } = useContentStore()
 
-  const tabs = [
+  // Temporarily limit the visible modes to the Bogdana pipeline + its helpers.
+  const VISIBLE_TABS = ['bogdana', 'montage', 'subs', 'upscale', 'uniqueizer'] as const
+
+  const allTabs = [
+    {
+      id: 'bogdana' as const,
+      label: 'Богдана',
+      icon: Wand2,
+      description: 'Пайплайн · Gemini',
+    },
     {
       id: 'text-to-post' as const,
       label: 'text-to-post',
@@ -73,7 +82,15 @@ export function TabNavigation() {
       icon: ZoomIn,
       description: 'Crystal Upscaler',
     },
+    {
+      id: 'uniqueizer' as const,
+      label: 'Уникализатор',
+      icon: Copy,
+      description: 'Уникальные копии видео',
+    },
   ]
+
+  const tabs = allTabs.filter((tab) => (VISIBLE_TABS as readonly string[]).includes(tab.id))
 
   return (
     <div className="flex flex-col gap-1 p-3 border-r border-border bg-card/30 min-w-[200px]">

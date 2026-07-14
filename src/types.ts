@@ -1,5 +1,6 @@
 export interface ApiKeys {
   grok: string
+  gemini: string
   wavespeed: string
   minimax: string
   captions: string

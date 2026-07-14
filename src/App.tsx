@@ -22,6 +22,8 @@ import { TextToPostPanel } from '@/components/TextToPostPanel'
 import { InstToPostPanel } from '@/components/InstToPostPanel'
 import { NSFWPanel } from '@/components/NSFWPanel'
 import { UpscalePanel } from '@/components/UpscalePanel'
+import { BogdanaPipelinePanel } from '@/components/BogdanaPipelinePanel'
+import { UniqueizerPanel } from '@/components/UniqueizerPanel'
 import { ModelSelectorModal } from '@/components/ModelSelectorModal'
 import { useContentStore } from '@/store/useContentStore'
 import type { NewsResearchState } from '@/store/useContentStore'
@@ -1051,6 +1053,7 @@ function App() {
         <TabNavigation />
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+            {activeTab === 'bogdana' && <BogdanaPipelinePanel />}
             {activeTab === 'variations' && (
               <>
                 <div className="mb-6">
@@ -1599,6 +1602,7 @@ function App() {
             <div className={activeTab !== 'inst-to-post' ? 'hidden' : ''}><InstToPostPanel /></div>
             <div className={activeTab !== 'nsfw' ? 'hidden' : ''}><NSFWPanel /></div>
             <div className={activeTab !== 'upscale' ? 'hidden' : ''}><UpscalePanel /></div>
+            <div className={activeTab !== 'uniqueizer' ? 'hidden' : ''}><UniqueizerPanel /></div>
             {activeTab === 'news-to-post' && (
               <NewsToPostPanel
                 research={newsResearch}
