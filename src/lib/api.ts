@@ -7,7 +7,9 @@ import {
   withStaticCamera,
   type BogdanaProductId,
 } from './bogdana'
+import { GrokVisionAnalyzer, parseVisionJson, type VisionAnalyzer } from './vision'
 export type { MinimaxTTSResult }
+export type { VisionAnalyzer } from './vision'
 
 export type LogFn = (message: string, level?: LogLevel) => void
 
@@ -110,7 +112,7 @@ export async function getWavespeedBalance(
 }
 
 export async function generatePromptsWithGrok(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   imageBase64: string,
   masterPrompt: string,
   count: number,
@@ -162,66 +164,14 @@ export async function generatePromptsWithGrok(
 
       const fullText = `${DNA}\n\n${masterPrompt}\n\nGenerate variation prompt #${i} of ${count} for ${modelName} model.${modelSpecificNote} Keep exact same appearance, clothing, hair, environment and lighting. Change ONLY: pose, camera angle, framing (close-up / medium / full), head tilt, gaze direction, subtle emotion/facial expression.${userWishesSection}\n\nIntensity level: ${intensity}/100 — ${intensityNote}\n\nRespond in EXACTLY this format (two lines, nothing else):\n[EN]: <English prompt text>\n[RU]: <Точный перевод на русский>`
 
-      const payload = {
-        model: 'grok-4.20-reasoning',
-        input: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_image',
-                image_url: dataUrl,
-                detail: 'high',
-              },
-              {
-                type: 'input_text',
-                text: fullText,
-              },
-            ],
-          },
-        ],
+      console.log(`[Vision:${analyzer.provider}] prompt ${i}/${count} → analyze (parallel)`)
+
+      const content = await analyzer.analyze({
+        images: [dataUrl],
+        userText: fullText,
         temperature: 0.7,
-        max_output_tokens: 2048,
-        store: false,
-      }
-
-      console.log(`[Grok] prompt ${i}/${count} → POST /v1/responses (parallel)`)
-
-      const httpResponse = await fetch('https://api.x.ai/v1/responses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: bearer(grokKey, 'Grok'),
-        },
-        body: JSON.stringify(payload),
-      }).catch((err) => {
-        throw new Error(`Network error: ${err.message}`)
+        maxOutputTokens: 2048,
       })
-
-      if (!httpResponse.ok) {
-        const errorData = await httpResponse.json().catch(() => ({}))
-        const msg = `Grok ${httpResponse.status} (промпт ${i}/${count}): ${JSON.stringify(errorData)}`
-        throw new Error(msg)
-      }
-
-      const data = await httpResponse.json() as Record<string, unknown>
-
-      // xAI /v1/responses: output array contains [reasoning, message] — find the message item
-      type OutputItem = { type?: string; content?: Array<{ type?: string; text?: string }> }
-      type ChoicesItem = { message?: { content?: string }; text?: string }
-      const output = (data as { output?: OutputItem[] }).output ?? []
-
-      const messageOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-      const outputText =
-        messageOutput?.content?.find((c) => c.type === 'output_text')?.text ??
-        messageOutput?.content?.[0]?.text
-
-      const rawContent: unknown =
-        outputText ??
-        (data as { choices?: ChoicesItem[] }).choices?.[0]?.message?.content ??
-        (data as { choices?: ChoicesItem[] }).choices?.[0]?.text
-
-      const content: string = typeof rawContent === 'string' ? rawContent : JSON.stringify(data)
 
       // Parse [EN]: / [RU]: format
       const enMatch = content.match(/\[EN\]:\s*([\s\S]*?)(?=\n\[RU\]:|$)/i)
@@ -1849,7 +1799,7 @@ export interface ContentBasedPostResult {
 }
 
 export async function generateContentBasedPost(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   frameDataUrls: string[],
   userMessage: string,
   durationSec: number,
@@ -1858,15 +1808,7 @@ export async function generateContentBasedPost(
   const wordsTarget = Math.round(durationSec * 2.5)
   onLog?.(`🎬 Анализирую видео (${frameDataUrls.length} кадров) + описание...`, 'info')
 
-  const imageContent = frameDataUrls.map((url) => ({
-    type: 'input_image',
-    image_url: url,
-    detail: 'high',
-  }))
-
-  const textContent = {
-    type: 'input_text',
-    text: `${SARAH_ICELYN_FULL_LORE}
+  const userText = `${SARAH_ICELYN_FULL_LORE}
 
 ${userMessage.trim() ? `USER DESCRIPTION OF THE VIDEO:\n${userMessage}\n` : 'NO USER DESCRIPTION PROVIDED — analyze the video frames entirely on your own.\n'}
 TASK: Based on the video frames above${userMessage.trim() ? " AND the user's description" : ""}, create a VIRAL TikTok/Instagram post in Sarah Icelyn's voice that triggers ONE or MORE of these strong emotional reactions:
@@ -1892,44 +1834,13 @@ Return ONLY valid JSON (no markdown fences):
   "voiceoverText": "<spoken voiceover ≈${wordsTarget} words>",
   "voiceoverTextRu": "<exact Russian translation>",
   "hashtags": ["#tag1","#tag2","#tag3","#tag4","#tag5"]
-}`,
-  }
+}`
 
-  const payload = {
-    model: 'grok-4.20-reasoning',
-    input: [
-      {
-        role: 'user',
-        content: [...imageContent, textContent],
-      },
-    ],
-    store: false,
-  }
-
-  const response = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: { Authorization: bearer(grokKey, 'Grok'), 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(`Grok API ${response.status}: ${JSON.stringify(err)}`)
-  }
-
-  const data = await response.json() as {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-  }
-  const output = data.output ?? []
-  const msgOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-  const raw = msgOutput?.content?.find((c) => c.type === 'output_text')?.text?.trim() ?? ''
+  const raw = await analyzer.analyze({ images: frameDataUrls, userText })
 
   let result: ContentBasedPostResult
   try {
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('no JSON')
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<ContentBasedPostResult>
+    const parsed = parseVisionJson<Partial<ContentBasedPostResult>>(raw)
     result = {
       videoAnalysis: parsed.videoAnalysis ?? '',
       postText: parsed.postText ?? raw,
@@ -2159,7 +2070,7 @@ export interface LipSyncFromImageResult {
 }
 
 export async function generateLipSyncPromptFromImage(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   imageDataUrl: string,
   emotion: string,
   onLog?: LogFn
@@ -2192,50 +2103,11 @@ Return JSON:
   "lipSyncPromptRu": "<Russian translation>"
 }`
 
-  const payload = {
-    model: 'grok-4.20-reasoning',
-    input: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'input_image', image_url: imageDataUrl, detail: 'high' },
-          { type: 'input_text', text: userText },
-        ],
-      },
-    ],
-    store: false,
-  }
+  const raw = await analyzer.analyze({ images: [imageDataUrl], systemPrompt, userText })
 
-  const httpResponse = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
-    body: JSON.stringify(payload),
-  })
+  const parsed = parseVisionJson<LipSyncFromImageResult>(raw)
 
-  if (!httpResponse.ok) {
-    const err = await httpResponse.json().catch(() => ({}))
-    throw new Error(`Grok vision ${httpResponse.status}: ${JSON.stringify(err)}`)
-  }
-
-  const data = await httpResponse.json() as {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-  }
-  const output = data.output ?? []
-  const msgOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-  const raw = msgOutput?.content?.find((c) => c.type === 'output_text')?.text?.trim() ?? ''
-
-  let parsed: LipSyncFromImageResult
-  try {
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('no JSON found')
-    parsed = JSON.parse(jsonMatch[0]) as LipSyncFromImageResult
-  } catch {
-    throw new Error(`Grok вернул невалидный JSON: ${raw.slice(0, 200)}`)
-  }
-
-  if (!parsed.lipSyncPrompt) throw new Error('Grok не вернул lipSyncPrompt')
+  if (!parsed.lipSyncPrompt) throw new Error('Модель не вернула lipSyncPrompt')
   onLog?.(`✅ LipSync промпт готов`, 'success')
   return parsed
 }
@@ -2765,7 +2637,7 @@ export interface InstToPostAnalysis {
 }
 
 export async function analyzeInstagramImageWithGrok(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   imageDataUrl: string,
   onLog?: LogFn
 ): Promise<InstToPostAnalysis> {
@@ -2805,47 +2677,9 @@ Return JSON:
   "grokImagePromptRu": "<Russian translation>"
 }`
 
-  const payload = {
-    model: 'grok-4.20-reasoning',
-    input: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'input_image', image_url: imageDataUrl, detail: 'high' },
-          { type: 'input_text', text: userText },
-        ],
-      },
-    ],
-    store: false,
-  }
+  const raw = await analyzer.analyze({ images: [imageDataUrl], systemPrompt, userText })
 
-  const httpResp = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
-    body: JSON.stringify(payload),
-  })
-  if (!httpResp.ok) {
-    const err = await httpResp.json().catch(() => ({}))
-    throw new Error(`Grok vision ${httpResp.status}: ${JSON.stringify(err)}`)
-  }
-
-  const data = await httpResp.json() as {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-  }
-  const output = data.output ?? []
-  const msgOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-  const raw = msgOutput?.content?.find((c) => c.type === 'output_text')?.text?.trim() ?? ''
-
-  let parsed: InstToPostAnalysis
-  try {
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('no JSON')
-    parsed = JSON.parse(jsonMatch[0]) as InstToPostAnalysis
-  } catch {
-    throw new Error(`Grok вернул невалидный JSON: ${raw.slice(0, 200)}`)
-  }
+  const parsed = parseVisionJson<InstToPostAnalysis>(raw)
 
   onLog?.('✅ Анализ готов!', 'success')
   return parsed
@@ -3029,7 +2863,7 @@ export async function editImageWithGPTImage2(
 
 // Analyze pose reference with Grok Vision to extract ONLY pose/camera/environment description
 async function analyzePoseReferenceWithGrokVision(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   poseRefImage: string,
   onLog?: LogFn
 ): Promise<string> {
@@ -3100,39 +2934,8 @@ Write a dense technical paragraph with EXACT measurements and specifications. Ex
 
 Target length: 200-250 words of pure technical specifications.`
 
-  const response = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: {
-      Authorization: bearer(grokKey, 'Grok'),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'grok-4.20-reasoning',
-      input: [
-        {
-          role: 'user',
-          content: [
-            { type: 'input_image', image_url: poseRefImage, detail: 'high' },
-            { type: 'input_text', text: analysisPrompt },
-          ],
-        },
-      ],
-      store: false,
-    }),
-  })
+  const poseDescription = await analyzer.analyze({ images: [poseRefImage], userText: analysisPrompt })
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(`Grok Vision API ${response.status}: ${JSON.stringify(err)}`)
-  }
-
-  const data = await response.json() as {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-  }
-  const output = data.output ?? []
-  const msgOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-  const poseDescription = msgOutput?.content?.find((c) => c.type === 'output_text')?.text?.trim() ?? ''
-  
   onLog?.(`✅ Описание позы: ${poseDescription.substring(0, 100)}...`)
   return poseDescription
 }
@@ -3151,7 +2954,7 @@ export async function generateNSFWPromptWithGrok(
   // If useSceneFromPose, analyze pose ref with Grok Vision first
   let poseDescription = ''
   if (useSceneFromPose) {
-    poseDescription = await analyzePoseReferenceWithGrokVision(grokKey, poseRefImage, onLog)
+    poseDescription = await analyzePoseReferenceWithGrokVision(new GrokVisionAnalyzer(grokKey), poseRefImage, onLog)
   }
   
   onLog?.('🔍 Grok анализирует все референсы для NSFW промпта...')
@@ -4445,7 +4248,7 @@ export interface KlingVideoToAudioResult {
  * @returns Generated SFX and BGM prompts in English and Russian
  */
 export async function generateKlingVideoAudioPromptsWithGrok(
-  grokKey: string,
+  analyzer: VisionAnalyzer,
   videoFrameDataUrl: string,
   userWishes: string,
   onLog?: LogFn
@@ -4484,51 +4287,12 @@ Return JSON format:
   "bgmPromptRu": "<Russian translation of BGM>"
 }`
 
-  const payload = {
-    model: 'grok-4.20-reasoning',
-    input: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: [
-          { type: 'input_image', image_url: videoFrameDataUrl, detail: 'high' },
-          { type: 'input_text', text: userText },
-        ],
-      },
-    ],
-    store: false,
-  }
+  const raw = await analyzer.analyze({ images: [videoFrameDataUrl], systemPrompt, userText })
 
-  const httpResponse = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: bearer(grokKey, 'Grok') },
-    body: JSON.stringify(payload),
-  })
-
-  if (!httpResponse.ok) {
-    const err = await httpResponse.json().catch(() => ({}))
-    throw new Error(`Grok vision ${httpResponse.status}: ${JSON.stringify(err)}`)
-  }
-
-  const data = await httpResponse.json() as {
-    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>
-  }
-  const output = data.output ?? []
-  const msgOutput = output.find((o) => o.type === 'message') ?? output[output.length - 1]
-  const raw = msgOutput?.content?.find((c) => c.type === 'output_text')?.text?.trim() ?? ''
-
-  let parsed: KlingVideoToAudioResult
-  try {
-    const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('no JSON found')
-    parsed = JSON.parse(jsonMatch[0]) as KlingVideoToAudioResult
-  } catch {
-    throw new Error(`Grok вернул невалидный JSON: ${raw.slice(0, 200)}`)
-  }
+  const parsed = parseVisionJson<KlingVideoToAudioResult>(raw)
 
   if (!parsed.soundEffectPrompt || !parsed.bgmPrompt) {
-    throw new Error('Grok не вернул полные промпты')
+    throw new Error('Модель не вернула полные промпты')
   }
 
   onLog?.(`✅ Промпты для звука готовы`, 'success')

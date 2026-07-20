@@ -18,6 +18,8 @@ import {
   submitKlingVideoToAudio,
   pollKlingVideoToAudioResult,
 } from '@/lib/api'
+import { createVisionAnalyzer } from '@/lib/vision'
+import { VisionProviderToggle } from '@/components/VisionProviderToggle'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -215,7 +217,7 @@ export function MontagePanel() {
   const timelineBodyRef = useRef<HTMLDivElement>(null)
 
   // Kling Video-to-Audio
-  const { apiKeys } = useContentStore()
+  const { apiKeys, visionProvider } = useContentStore()
   const [klingWishes, setKlingWishes] = useState('')
   const [klingAsmrMode, setKlingAsmrMode] = useState(false)
   const [klingBgmEnabled, setKlingBgmEnabled] = useState(true)
@@ -423,10 +425,10 @@ export function MontagePanel() {
       const frameDataUrl = await extractVideoFrame(videoUrl)
       addKlingLog('✅ Кадр извлечен')
 
-      // Step 2: Generate prompts with Grok Vision
-      addKlingLog('🧠 Grok анализирует видео...')
+      // Step 2: Generate prompts with the selected vision analyzer
+      addKlingLog('🧠 Анализ видео...')
       const prompts = await generateKlingVideoAudioPromptsWithGrok(
-        apiKeys.grok,
+        createVisionAnalyzer(visionProvider, apiKeys),
         frameDataUrl,
         klingWishes,
         addKlingLog
@@ -1784,9 +1786,12 @@ export function MontagePanel() {
 
             {/* Kling Video-to-Audio */}
             <div className="rounded-xl border border-border bg-card overflow-hidden">
-              <div className="px-3 py-2.5 border-b border-border/50 flex items-center gap-2">
-                <Volume2 className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs font-semibold text-foreground">Kling Video-to-Audio</span>
+              <div className="px-3 py-2.5 border-b border-border/50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs font-semibold text-foreground">Kling Video-to-Audio</span>
+                </div>
+                <VisionProviderToggle />
               </div>
               <div className="p-3 space-y-3">
                 {/* Video source indicator */}

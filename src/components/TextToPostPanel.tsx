@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useContentStore } from '@/store/useContentStore'
 import type { SarahTextToPostResult, ContentBasedPostResult } from '@/lib/api'
 import { generateSarahTextToPost, generateContentBasedPost } from '@/lib/api'
+import { createVisionAnalyzer } from '@/lib/vision'
 import { cn } from '@/lib/utils'
 
 // ── Sarah Icelyn mind map (same as in NewsToPostPanel) ────────────────────
@@ -188,7 +189,7 @@ async function extractVideoFrames(file: File, count = 3): Promise<string[]> {
 }
 
 export function TextToPostPanel() {
-  const { apiKeys, addLog, setActiveTab, setPendingVoiceText } = useContentStore()
+  const { apiKeys, addLog, setActiveTab, setPendingVoiceText, visionProvider } = useContentStore()
 
   const [duration, setDuration] = useState(15)
   const [isLoading, setIsLoading] = useState(false)
@@ -264,7 +265,7 @@ export function TextToPostPanel() {
         addLog(`✅ Фото готово, отправляю в Grok...`, 'info')
       }
       
-      const res = await generateContentBasedPost(apiKeys.grok, frames, contentMessage.trim(), contentDuration, addLog)
+      const res = await generateContentBasedPost(createVisionAnalyzer(visionProvider, apiKeys), frames, contentMessage.trim(), contentDuration, addLog)
       console.log('[TextToPost] Content result:', res)
       setContentResult(res)
       addLog(`✅ Результат получен и установлен`, 'success')

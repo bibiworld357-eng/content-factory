@@ -10,6 +10,7 @@ import {
   generateLipSyncPromptFromImage,
 } from '@/lib/api'
 import type { InfiniteTalkPrompts, NanoBananaMultiResult, LipSyncFromImageResult } from '@/lib/api'
+import { createVisionAnalyzer } from '@/lib/vision'
 import { cn } from '@/lib/utils'
 
 // ── Constants ─────────────────────────────────────────────────────────────
@@ -545,7 +546,7 @@ function RoomImagesModal({
 // ── Component ─────────────────────────────────────────────────────────────
 
 export function InfiniteTalkPanel() {
-  const { apiKeys, addLog, voiceResult } = useContentStore()
+  const { apiKeys, addLog, voiceResult, visionProvider } = useContentStore()
 
   // Settings
   const [emotion, setEmotion] = useState('neutral')
@@ -847,10 +848,11 @@ export function InfiniteTalkPanel() {
       let finalLipSyncPrompt = lipSyncPromptOverride || (prompts?.lipSyncPrompt ?? '')
       let maskDataUrl: string | undefined
 
-      if (uploadedFrame && apiKeys.grok) {
+      const hasVisionKey = visionProvider === 'gemini' ? !!apiKeys.gemini : !!apiKeys.grok
+      if (uploadedFrame && hasVisionKey) {
         setUploadedFrameGrokResult(null)
         const grokResult = await generateLipSyncPromptFromImage(
-          apiKeys.grok,
+          createVisionAnalyzer(visionProvider, apiKeys),
           imageDataUrl,
           uploadedFrame.emotion,
           addLog

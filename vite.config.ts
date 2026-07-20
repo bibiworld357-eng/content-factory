@@ -291,6 +291,12 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api\/captions/, ''),
         secure: false,
       },
+      '/api/gemini': {
+        target: 'https://generativelanguage.googleapis.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/gemini/, ''),
+        secure: false,
+      },
     },
   },
 })
