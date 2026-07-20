@@ -1,12 +1,43 @@
 import type { ApiKeys } from '@/types'
 import { createVisionAnalyzer, parseVisionJson, type VisionProvider } from './vision'
 import {
-  generateBogdanaFrame,
+  generateNanoBananaMultiRef,
+  editImageWithGPTImage2,
   submitKlingVideoTask,
   pollKlingResult,
   DEFAULT_KLING_MODEL,
-  type BogdanaImageModel,
 } from './api'
+
+/** Image models available to the pipeline (self-contained, no DNA injection). */
+export type PipelineImageModel = 'nano-banana' | 'gpt-image'
+
+export const PIPELINE_IMAGE_MODELS: { id: PipelineImageModel; label: string }[] = [
+  { id: 'nano-banana', label: 'Nano Banana 2' },
+  { id: 'gpt-image', label: 'GPT Image 2' },
+]
+
+/**
+ * Generate a single image from reference frames + prompt. Uses the generic
+ * Wavespeed image models with `injectDefaultDna=false` so the pipeline stays a
+ * standalone app (no character/DNA references baked in).
+ */
+async function generatePipelineImage(
+  model: PipelineImageModel,
+  wavespeedKey: string,
+  referenceImages: string[],
+  prompt: string,
+  aspectRatio: string,
+  resolution: string,
+  onLog?: (msg: string) => void
+): Promise<string | undefined> {
+  const log = onLog ? (m: string) => onLog(m) : undefined
+  if (model === 'gpt-image') {
+    const res = await editImageWithGPTImage2(wavespeedKey, referenceImages, prompt, resolution, aspectRatio, log, false)
+    return res.imageUrl
+  }
+  const results = await generateNanoBananaMultiRef(wavespeedKey, referenceImages, prompt, aspectRatio, resolution, 1, log, false)
+  return results[0]?.imageUrl
+}
 
 /**
  * Browser-side video-generation pipeline. Every network call is isolated in
@@ -67,7 +98,7 @@ export interface PipelineScene {
 export interface PipelineConfig {
   provider: VisionProvider
   concurrency: number
-  imageModel: BogdanaImageModel
+  imageModel: PipelineImageModel
   aspectRatio: string
   resolution: string
   videoDuration: number
@@ -114,6 +145,77 @@ export function splitScenes(scenario: string): PipelineScene[] {
       stages: emptyStages(),
     }
   })
+}
+
+/** Load a video element from a data/blob URL and resolve once its metadata is ready. */
+function loadVideo(src: string): Promise<HTMLVideoElement> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video')
+    video.crossOrigin = 'anonymous'
+    video.muted = true
+    video.preload = 'auto'
+    video.onloadedmetadata = () => resolve(video)
+    video.onerror = () => reject(new Error('Не удалось загрузить видео'))
+    video.src = src
+  })
+}
+
+/** Capture the frame at a given timestamp as a JPEG data URL. */
+function seekAndCapture(video: HTMLVideoElement, time: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const onSeeked = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = video.videoWidth || 720
+        canvas.height = video.videoHeight || 1280
+        canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height)
+        resolve(canvas.toDataURL('image/jpeg', 0.9))
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)))
+      } finally {
+        video.removeEventListener('seeked', onSeeked)
+      }
+    }
+    video.addEventListener('seeked', onSeeked)
+    video.currentTime = Math.min(time, Math.max(0, (video.duration || 0) - 0.05))
+  })
+}
+
+/**
+ * Scene Splitter (video source) — split an uploaded video into `sceneCount`
+ * equal time segments and capture a representative frame at each segment's
+ * midpoint. Each scene's captured frame becomes its reference for the vision
+ * stages. Runs fully in the browser (canvas), no network.
+ */
+export async function splitVideoIntoScenes(
+  videoDataUrl: string,
+  sceneCount: number
+): Promise<PipelineScene[]> {
+  const count = Math.max(1, Math.floor(sceneCount))
+  const video = await loadVideo(videoDataUrl)
+  const duration = video.duration || 0
+  const segment = duration / count
+
+  const scenes: PipelineScene[] = []
+  for (let i = 0; i < count; i++) {
+    const start = segment * i
+    const mid = duration > 0 ? start + segment / 2 : 0
+    const frame = await seekAndCapture(video, mid)
+    const fmt = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`
+    scenes.push({
+      id: `scene-${i + 1}`,
+      index: i,
+      title: duration > 0 ? `Сегмент ${fmt(start)}–${fmt(start + segment)}` : `Сцена ${i + 1}`,
+      sourceText:
+        duration > 0
+          ? `Сцена из видео, сегмент ${fmt(start)}–${fmt(start + segment)}.`
+          : `Сцена ${i + 1} из видео.`,
+      referenceImage: frame,
+      frame,
+      stages: emptyStages(),
+    })
+  }
+  return scenes
 }
 
 /** Bounded-concurrency worker pool built on promises (no external deps). */
@@ -238,7 +340,7 @@ const SCENE_RUNNERS: Record<
     if (!ctx.keys.wavespeed) throw new Error('Нет Wavespeed API ключа для генерации изображений')
     const prompt = scene.optimizedPrompt ?? scene.imagePrompt ?? scene.sourceText
     const refs = scene.frame ?? scene.referenceImage
-    const imageUrl = await generateBogdanaFrame(
+    const imageUrl = await generatePipelineImage(
       ctx.config.imageModel,
       ctx.keys.wavespeed,
       refs ? [refs] : [],

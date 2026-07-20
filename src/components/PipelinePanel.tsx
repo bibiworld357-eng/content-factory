@@ -10,17 +10,19 @@ import {
   Minus,
   Upload,
   StopCircle,
+  Film,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn, fileToBase64 } from '@/lib/utils'
 import { useContentStore } from '@/store/useContentStore'
 import { VisionProviderToggle } from '@/components/VisionProviderToggle'
-import { BOGDANA_IMAGE_MODELS } from '@/lib/api'
 import {
   PIPELINE_STAGES,
   SCENE_STAGES,
+  PIPELINE_IMAGE_MODELS,
   splitScenes,
+  splitVideoIntoScenes,
   runPipeline,
   type PipelineScene,
   type StageStatus,
@@ -121,9 +123,14 @@ export function PipelinePanel() {
   } = useContentStore()
 
   const [scenario, setScenario] = useState('')
+  const [source, setSource] = useState<'text' | 'video'>('text')
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [videoSceneCount, setVideoSceneCount] = useState(3)
+  const [splitting, setSplitting] = useState(false)
   const [running, setRunning] = useState(false)
   const [logs, setLogs] = useState<string[]>([])
   const cancelRef = useRef(false)
+  const videoInputRef = useRef<HTMLInputElement>(null)
 
   const addLog = (msg: string) => setLogs((prev) => [...prev.slice(-200), msg])
 
@@ -142,6 +149,26 @@ export function PipelinePanel() {
     const scenes = splitScenes(scenario)
     setPipelineScenes(scenes)
     addLog(`✂️ Scene Splitter: ${scenes.length} сцен`)
+  }
+
+  async function handleVideoUpload(file: File) {
+    const dataUrl = await fileToBase64(file)
+    setVideoUrl(dataUrl)
+    addLog(`🎬 Видео загружено: ${file.name}`)
+  }
+
+  async function handleSplitVideo() {
+    if (!videoUrl || splitting) return
+    setSplitting(true)
+    try {
+      const scenes = await splitVideoIntoScenes(videoUrl, videoSceneCount)
+      setPipelineScenes(scenes)
+      addLog(`✂️ Scene Splitter (видео): ${scenes.length} сцен, кадры извлечены`)
+    } catch (err) {
+      addLog(`❌ ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSplitting(false)
+    }
   }
 
   function handleReference(sceneId: string, dataUrl: string) {
@@ -195,23 +222,93 @@ export function PipelinePanel() {
 
       {/* Scene Splitter */}
       <div className="rounded-xl border border-border bg-card p-3 space-y-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Scene Splitter
-        </span>
-        <Textarea
-          value={scenario}
-          onChange={(e) => setScenario(e.target.value)}
-          placeholder="Вставь сценарий. Сцены разделяются нумерацией (1. 2. 3.) или пустой строкой."
-          className="min-h-[120px] text-sm"
-        />
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={handleSplit} disabled={!scenario.trim() || running}>
-            <Scissors className="h-4 w-4" /> Разбить на сцены
-          </Button>
-          {pipelineScenes.length > 0 && (
-            <span className="text-xs text-muted-foreground">{pipelineScenes.length} сцен</span>
-          )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Scene Splitter
+          </span>
+          <div className="inline-flex rounded-md border border-border bg-card/50 p-0.5">
+            {(['text', 'video'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSource(s)}
+                className={cn(
+                  'px-2.5 py-1 rounded text-xs font-medium transition-colors',
+                  source === s ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {s === 'text' ? 'Сценарий' : 'Видео'}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {source === 'text' ? (
+          <>
+            <Textarea
+              value={scenario}
+              onChange={(e) => setScenario(e.target.value)}
+              placeholder="Вставь сценарий. Сцены разделяются нумерацией (1. 2. 3.) или пустой строкой."
+              className="min-h-[120px] text-sm"
+            />
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={handleSplit} disabled={!scenario.trim() || running}>
+                <Scissors className="h-4 w-4" /> Разбить на сцены
+              </Button>
+              {pipelineScenes.length > 0 && (
+                <span className="text-xs text-muted-foreground">{pipelineScenes.length} сцен</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <input
+              ref={videoInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0]
+                if (f) await handleVideoUpload(f)
+              }}
+            />
+            {videoUrl ? (
+              <video src={videoUrl} controls className="w-full max-h-48 rounded-lg border border-border bg-black" />
+            ) : (
+              <button
+                type="button"
+                onClick={() => videoInputRef.current?.click()}
+                className="w-full flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border py-8 text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors"
+              >
+                <Film className="h-6 w-6" />
+                <span className="text-sm">Загрузить видео</span>
+              </button>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={() => videoInputRef.current?.click()} disabled={running || splitting}>
+                <Upload className="h-4 w-4" /> {videoUrl ? 'Заменить' : 'Выбрать'} видео
+              </Button>
+              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                Сцен
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={videoSceneCount}
+                  onChange={(e) => setVideoSceneCount(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-16 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                />
+              </label>
+              <Button size="sm" variant="secondary" onClick={handleSplitVideo} disabled={!videoUrl || splitting || running}>
+                {splitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
+                Разбить видео на сцены
+              </Button>
+              {pipelineScenes.length > 0 && (
+                <span className="text-xs text-muted-foreground">{pipelineScenes.length} сцен</span>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Config */}
@@ -234,7 +331,7 @@ export function PipelinePanel() {
             onChange={(e) => setPipelineConfig({ imageModel: e.target.value as typeof pipelineConfig.imageModel })}
             className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
           >
-            {BOGDANA_IMAGE_MODELS.map((m) => (
+            {PIPELINE_IMAGE_MODELS.map((m) => (
               <option key={m.id} value={m.id}>{m.label}</option>
             ))}
           </select>
