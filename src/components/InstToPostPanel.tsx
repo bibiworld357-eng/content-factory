@@ -12,6 +12,8 @@ import {
   loadDnaReferenceImage,
   type InstToPostAnalysis,
 } from '@/lib/api'
+import { createVisionAnalyzer } from '@/lib/vision'
+import { VisionProviderToggle } from '@/components/VisionProviderToggle'
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -59,7 +61,7 @@ function ResultCard({ label, imageUrl, prompt }: { label: string; imageUrl: stri
 type GenerationState = 'idle' | 'loading' | 'done' | 'error'
 
 export function InstToPostPanel() {
-  const { apiKeys, addLog } = useContentStore()
+  const { apiKeys, addLog, visionProvider } = useContentStore()
 
   const [instagramUrl, setInstagramUrl] = useState('')
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
@@ -147,7 +149,9 @@ export function InstToPostPanel() {
 
   async function handleAnalyze() {
     if (!imageDataUrl || isAnalyzing) return
-    if (!grokKey) { addLog('❌ Нет Grok API ключа', 'error'); return }
+    if (visionProvider === 'gemini' ? !apiKeys.gemini : !grokKey) {
+      addLog(`❌ Нет ${visionProvider === 'gemini' ? 'Gemini' : 'Grok'} API ключа`, 'error'); return
+    }
     if (!wavespeedKey) { addLog('❌ Нет Wavespeed API ключа', 'error'); return }
 
     setIsAnalyzing(true)
@@ -155,7 +159,8 @@ export function InstToPostPanel() {
     setAnalysis(null)
 
     try {
-      const analysisResult = await analyzeInstagramImageWithGrok(grokKey, imageDataUrl, addLog)
+      const analyzer = createVisionAnalyzer(visionProvider, apiKeys)
+      const analysisResult = await analyzeInstagramImageWithGrok(analyzer, imageDataUrl, addLog)
       setAnalysis(analysisResult)
       setShowPrompts(true)
       
@@ -322,9 +327,12 @@ export function InstToPostPanel() {
   return (
     <div className="flex flex-col gap-4 p-4 max-w-2xl mx-auto w-full">
       {/* Header */}
-      <div className="flex items-center gap-2">
-        <ImagePlay className="h-5 w-5 text-primary" />
-        <h2 className="text-lg font-semibold text-foreground">inst-to-post</h2>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <ImagePlay className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold text-foreground">inst-to-post</h2>
+        </div>
+        <VisionProviderToggle />
       </div>
       <p className="text-sm text-muted-foreground -mt-2">
         Вставь ссылку из Instagram — Grok проанализирует сеттинг и сгенерирует твою модель в той же сцене

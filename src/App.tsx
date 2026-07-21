@@ -23,11 +23,13 @@ import { InstToPostPanel } from '@/components/InstToPostPanel'
 import { NSFWPanel } from '@/components/NSFWPanel'
 import { UpscalePanel } from '@/components/UpscalePanel'
 import { BogdanaPipelinePanel } from '@/components/BogdanaPipelinePanel'
+import { PipelinePanel } from '@/components/PipelinePanel'
 import { UniqueizerPanel } from '@/components/UniqueizerPanel'
 import { ModelSelectorModal } from '@/components/ModelSelectorModal'
 import { useContentStore } from '@/store/useContentStore'
 import type { NewsResearchState } from '@/store/useContentStore'
 import { generatePromptsWithGrok, editImageWithWavespeed, editImageWithGPTImage2, editImageWithZImageTurboLora, editImageWithGrokImagineWavespeed, editImageWithSeedream, generateVideoPromptsWithGrok, submitKlingVideoTask, pollKlingResult, getWavespeedBalance, researchNewsWithGrok, fetchTrendingTopics, researchTopicWithGrok, regeneratePostWithGrok, compressPostWithGrok, resizePostBySentencesWithGrok } from '@/lib/api'
+import { createVisionAnalyzer } from '@/lib/vision'
 import { calculateNanoBananaPrice, formatPrice } from '@/lib/pricing'
 import { generateId } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -55,6 +57,7 @@ function App() {
     imgToImgModel,
     zImageStrength,
     activeTab,
+    visionProvider,
     videoQueue,
     videoGenerations,
     videoSettings,
@@ -240,7 +243,7 @@ function App() {
       
       // Single batch request to Grok for all models
       const batchPrompts = await generatePromptsWithGrok(
-        apiKeys.grok,
+        createVisionAnalyzer(visionProvider, apiKeys),
         uploadedImage.base64,
         `${masterPrompt}\n\nGenerate ${batchFrameCount} prompt${batchFrameCount === 1 ? '' : 's'} for EACH of these models: ${modelsList}. Label each prompt with model name.`,
         totalFrames,
@@ -390,7 +393,7 @@ function App() {
         : 'Nano Banana 2 Edit'
       
       await generatePromptsWithGrok(
-        apiKeys.grok,
+        createVisionAnalyzer(visionProvider, apiKeys),
         uploadedImage.base64,
         masterPrompt,
         frameCount,
@@ -1054,6 +1057,7 @@ function App() {
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
             {activeTab === 'bogdana' && <BogdanaPipelinePanel />}
+            {activeTab === 'pipeline' && <PipelinePanel />}
             {activeTab === 'variations' && (
               <>
                 <div className="mb-6">

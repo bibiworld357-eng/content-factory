@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ApiKeys, GenerationItem, UploadedImage, LogEntry, LogLevel, VideoQueueItem, VideoGenerationItem, VideoSettings, MinimaxTTSResult } from '@/types'
+import type { VisionProvider } from '@/lib/vision'
+import type { PipelineScene, PipelineConfig } from '@/lib/pipeline'
+import { DEFAULT_PIPELINE_CONFIG } from '@/lib/pipeline'
 
 export interface XPost {
   author: string
@@ -98,7 +101,10 @@ interface ContentStore {
   selectedModelsForBatch: string[]
   showModelSelector: boolean
   batchFrameCount: number
-  activeTab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer'
+  activeTab: 'bogdana' | 'pipeline' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer'
+  visionProvider: VisionProvider
+  pipelineScenes: PipelineScene[]
+  pipelineConfig: PipelineConfig
   voiceResult: MinimaxTTSResult | null
   pendingVoiceText: string | null
   newsResearch: NewsResearchState | null
@@ -139,7 +145,11 @@ interface ContentStore {
   setSelectedModelsForBatch: (models: string[]) => void
   setShowModelSelector: (show: boolean) => void
   setBatchFrameCount: (count: number) => void
-  setActiveTab: (tab: 'bogdana' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer') => void
+  setActiveTab: (tab: 'bogdana' | 'pipeline' | 'variations' | 'img-to-video' | 'news-to-post' | 'montage' | 'voice' | 'infinitetalk' | 'subs' | 'text-to-post' | 'inst-to-post' | 'nsfw' | 'upscale' | 'uniqueizer') => void
+  setVisionProvider: (provider: VisionProvider) => void
+  setPipelineScenes: (scenes: PipelineScene[]) => void
+  updatePipelineScene: (scene: PipelineScene) => void
+  setPipelineConfig: (config: Partial<PipelineConfig>) => void
   setVoiceResult: (result: MinimaxTTSResult | null) => void
   setPendingVoiceText: (text: string | null) => void
   setNewsResearch: (result: NewsResearchState | null) => void
@@ -189,6 +199,9 @@ export const useContentStore = create<ContentStore>()(
       showModelSelector: false,
       batchFrameCount: 1,
       activeTab: 'bogdana',
+      visionProvider: 'grok',
+      pipelineScenes: [],
+      pipelineConfig: DEFAULT_PIPELINE_CONFIG,
       voiceResult: null,
       pendingVoiceText: null,
       newsResearch: null,
@@ -292,6 +305,14 @@ export const useContentStore = create<ContentStore>()(
       setShowModelSelector: (show) => set({ showModelSelector: show }),
       setBatchFrameCount: (count) => set({ batchFrameCount: count }),
       setActiveTab: (tab) => set({ activeTab: tab }),
+      setVisionProvider: (provider) => set({ visionProvider: provider }),
+      setPipelineScenes: (scenes) => set({ pipelineScenes: scenes }),
+      updatePipelineScene: (scene) =>
+        set((state) => ({
+          pipelineScenes: state.pipelineScenes.map((s) => (s.id === scene.id ? scene : s)),
+        })),
+      setPipelineConfig: (config) =>
+        set((state) => ({ pipelineConfig: { ...state.pipelineConfig, ...config } })),
       setVoiceResult: (result) => set({ voiceResult: result }),
       setPendingVoiceText: (text) => set({ pendingVoiceText: text }),
       setNewsResearch: (result) => set({ newsResearch: result }),
@@ -460,6 +481,16 @@ export const useContentStore = create<ContentStore>()(
         aspectRatio: state.aspectRatio,
         resolution: state.resolution,
         intensity: state.intensity,
+        visionProvider: state.visionProvider,
+        pipelineConfig: state.pipelineConfig,
+        // Persist scene state for resume, but strip large base64 blobs so we
+        // stay within the localStorage quota (remote URLs are kept).
+        pipelineScenes: state.pipelineScenes.map((s) => {
+          const copy = { ...s }
+          delete copy.referenceImage
+          delete copy.frame
+          return copy
+        }),
         nsfwReferences: state.nsfwReferences,
       }),
       onRehydrateStorage: () => {
