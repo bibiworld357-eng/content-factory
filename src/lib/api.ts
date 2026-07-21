@@ -2075,7 +2075,7 @@ export async function generateLipSyncPromptFromImage(
   emotion: string,
   onLog?: LogFn
 ): Promise<LipSyncFromImageResult> {
-  onLog?.('🧠 Grok анализирует кадр и эмоцию...', 'info')
+  onLog?.(`🧠 ${analyzer.provider === 'gemini' ? 'Gemini' : 'Grok'} анализирует кадр и эмоцию...`, 'info')
 
   const emotionDesc = EMOTION_PROMPT_MAP[emotion] ?? 'neutral expression'
 
@@ -2641,7 +2641,7 @@ export async function analyzeInstagramImageWithGrok(
   imageDataUrl: string,
   onLog?: LogFn
 ): Promise<InstToPostAnalysis> {
-  onLog?.('🧠 Grok анализирует Instagram фото...', 'info')
+  onLog?.(`🧠 ${analyzer.provider === 'gemini' ? 'Gemini' : 'Grok'} анализирует Instagram фото...`, 'info')
 
   const systemPrompt = `You are a creative director. Analyze the image and generate prompts to recreate the same scene with a different person (described below).
 Return ONLY valid JSON, no markdown, no code fences.`
@@ -2867,7 +2867,7 @@ async function analyzePoseReferenceWithGrokVision(
   poseRefImage: string,
   onLog?: LogFn
 ): Promise<string> {
-  onLog?.('🔍 Grok Vision анализирует референс позы...')
+  onLog?.(`🔍 ${analyzer.provider === 'gemini' ? 'Gemini' : 'Grok'} Vision анализирует референс позы...`)
 
   const analysisPrompt = `⚠️ CRITICAL MISSION: This image will NOT be shown to the AI model. You must extract EXTREMELY DETAILED technical specifications so the model can recreate the EXACT pose and camera setup from TEXT ONLY.
 
@@ -4253,7 +4253,7 @@ export async function generateKlingVideoAudioPromptsWithGrok(
   userWishes: string,
   onLog?: LogFn
 ): Promise<KlingVideoToAudioResult> {
-  onLog?.('🧠 Grok анализирует видео и генерирует промпты для звука...', 'info')
+  onLog?.(`🧠 ${analyzer.provider === 'gemini' ? 'Gemini' : 'Grok'} анализирует видео и генерирует промпты для звука...`, 'info')
 
   const systemPrompt = `You are an expert audio designer specializing in video-to-audio generation.
 Return ONLY valid JSON with exactly 4 keys: soundEffectPrompt, bgmPrompt, soundEffectPromptRu, bgmPromptRu.
